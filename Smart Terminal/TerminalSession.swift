@@ -49,6 +49,14 @@ final class TerminalSession {
         process.send(data: ArraySlice([UInt8](data)))
     }
 
+    func sendCommand(_ command: String) {
+        var line = command
+        if !line.hasSuffix("\r"), !line.hasSuffix("\n") {
+            line += "\r"
+        }
+        sendInput(Data(line.utf8))
+    }
+
     func updateWorkingDirectory(_ directory: String?) {
         guard let directory, !directory.isEmpty else { return }
         workingDirectory = directory

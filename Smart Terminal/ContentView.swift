@@ -44,18 +44,28 @@ struct ContentView: View {
         HStack(spacing: 0) {
             TerminalTabBar(manager: tabs)
 
-            AppTheme.border.frame(width: 1)
+            VStack(spacing: AppTheme.space2) {
+                ZStack {
+                    AppTheme.terminal
+                    ForEach(tabs.tabs) { tab in
+                        TerminalView(session: tab.session, isActive: tab.id == tabs.selectedID)
+                            .opacity(tab.id == tabs.selectedID ? 1 : 0)
+                            .allowsHitTesting(tab.id == tabs.selectedID)
+                    }
+                }
+                .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                .clipShape(RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous))
+                .overlay(
+                    RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous)
+                        .strokeBorder(AppTheme.border, lineWidth: 1)
+                )
 
-            ZStack {
-                AppTheme.terminal
-                ForEach(tabs.tabs) { tab in
-                    TerminalView(session: tab.session, isActive: tab.id == tabs.selectedID)
-                        .opacity(tab.id == tabs.selectedID ? 1 : 0)
-                        .allowsHitTesting(tab.id == tabs.selectedID)
+                if let tab = tabs.selectedTab {
+                    TerminalCommandField(tab: tab)
                 }
             }
+            .padding(AppTheme.space2)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-            .clipped()
         }
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         .background(AppTheme.window)
@@ -87,11 +97,13 @@ struct ContentView: View {
                 NSApp.keyWindow?.performClose(nil)
             }
             DispatchQueue.main.async {
+                CommandFieldFocus.isActive = false
                 tabs.selectedTab?.session.focus()
             }
         }
         .onChange(of: tabs.selectedID) { _, _ in
             DispatchQueue.main.async {
+                CommandFieldFocus.isActive = false
                 tabs.selectedTab?.session.focus()
             }
         }
@@ -106,6 +118,160 @@ struct ContentView: View {
 }
 
 #if os(macOS)
+private struct TerminalCommandField: View {
+    @ObservedObject var tab: TerminalTab
+    @State private var focusToken = 0
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: AppTheme.space1) {
+            if !tab.commandQueue.isEmpty {
+                ScrollView {
+                    VStack(spacing: AppTheme.space1) {
+                        ForEach(tab.commandQueue) { command in
+                            HStack(spacing: AppTheme.space2) {
+                                Text("Queued")
+                                    .font(.system(size: 11, weight: .medium))
+                                    .foregroundStyle(AppTheme.textSecondary)
+                                Text(command.text)
+                                    .font(.system(size: 13, design: .monospaced))
+                                    .foregroundStyle(AppTheme.textPrimary)
+                                    .lineLimit(1)
+                                    .truncationMode(.tail)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                            .padding(.horizontal, 10)
+                            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+                            .background(
+                                RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                                    .fill(AppTheme.header)
+                            )
+                            .overlay(
+                                RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                                    .strokeBorder(AppTheme.border, lineWidth: 1)
+                            )
+                        }
+                    }
+                }
+                .frame(maxHeight: 120)
+            }
+
+            HStack(spacing: AppTheme.space2) {
+                Text("$")
+                    .font(.system(size: 13, weight: .medium, design: .monospaced))
+                    .foregroundStyle(AppTheme.textSecondary)
+
+                CommandLineTextField(
+                    text: $tab.commandDraft,
+                    placeholder: placeholder,
+                    focusToken: focusToken,
+                    onSubmit: submit
+                )
+            }
+            .padding(.horizontal, 10)
+            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                    .fill(AppTheme.header)
+            )
+            .overlay(
+                RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                    .strokeBorder(AppTheme.border, lineWidth: 1)
+            )
+        }
+    }
+
+    private var placeholder: String {
+        if tab.isCommandRunning || !tab.commandQueue.isEmpty {
+            return "Queue next command"
+        }
+        return "Enter a command"
+    }
+
+    private func submit() {
+        let command = tab.commandDraft.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !command.isEmpty else { return }
+        tab.submitCommand(command)
+        tab.commandDraft = ""
+        CommandFieldFocus.isActive = true
+        focusToken += 1
+    }
+}
+
+private struct CommandLineTextField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var focusToken: Int
+    var onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, onSubmit: onSubmit)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: text)
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        field.textColor = NSColor(calibratedWhite: 0.92, alpha: 1)
+        field.placeholderString = placeholder
+        field.delegate = context.coordinator
+        field.lineBreakMode = .byTruncatingTail
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.onSubmit = onSubmit
+        nsView.placeholderString = placeholder
+        if nsView.stringValue != text {
+            nsView.stringValue = text
+        }
+        if context.coordinator.focusToken != focusToken {
+            context.coordinator.focusToken = focusToken
+            CommandFieldFocus.claim(nsView)
+            for delay in [0.0, 0.05, 0.15, 0.3] {
+                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                    CommandFieldFocus.restoreIfNeeded()
+                }
+            }
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var onSubmit: () -> Void
+        var focusToken = 0
+
+        init(text: Binding<String>, onSubmit: @escaping () -> Void) {
+            self.text = text
+            self.onSubmit = onSubmit
+        }
+
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            CommandFieldFocus.isActive = true
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            text.wrappedValue = field.stringValue
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                CommandFieldFocus.isActive = true
+                onSubmit()
+                if let field = control as? NSTextField {
+                    field.stringValue = ""
+                    text.wrappedValue = ""
+                }
+                return true
+            }
+            return false
+        }
+    }
+}
+
 private struct ActiveTerminalTitle: View {
     @ObservedObject var tab: TerminalTab
 

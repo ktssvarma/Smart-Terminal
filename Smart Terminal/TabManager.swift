@@ -10,7 +10,12 @@ final class TerminalTab: Identifiable, ObservableObject {
     @Published var title: String
     @Published var isPinned: Bool
     @Published var isCommandRunning = false
+    @Published var commandDraft = ""
+    @Published var commandQueue: [QueuedCommand] = []
     var onStateChange: (() -> Void)?
+
+    private var isAwaitingCompletion = false
+    private var completionFallback: DispatchWorkItem?
 
     init(id: UUID = UUID(), workingDirectory: String? = nil, isPinned: Bool = false) {
         self.id = id
@@ -23,8 +28,53 @@ final class TerminalTab: Identifiable, ObservableObject {
             self.onStateChange?()
         }
         session.onCommandRunningChange = { [weak self] running in
-            self?.isCommandRunning = running
+            self?.handleCommandRunningChange(running)
         }
+    }
+
+    func submitCommand(_ command: String) {
+        if isCommandRunning || isAwaitingCompletion || !commandQueue.isEmpty {
+            commandQueue.append(QueuedCommand(text: command))
+            return
+        }
+        startCommand(command)
+    }
+
+    private func handleCommandRunningChange(_ running: Bool) {
+        isCommandRunning = running
+        if running {
+            isAwaitingCompletion = true
+            completionFallback?.cancel()
+            return
+        }
+        if isAwaitingCompletion {
+            finishCurrentAndRunNext()
+        }
+    }
+
+    private func startCommand(_ command: String) {
+        isAwaitingCompletion = true
+        session.sendCommand(command)
+        scheduleCompletionFallback()
+    }
+
+    private func scheduleCompletionFallback() {
+        completionFallback?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, self.isAwaitingCompletion, !self.isCommandRunning else { return }
+            self.finishCurrentAndRunNext()
+        }
+        completionFallback = work
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.6, execute: work)
+    }
+
+    private func finishCurrentAndRunNext() {
+        isAwaitingCompletion = false
+        completionFallback?.cancel()
+        completionFallback = nil
+        guard !commandQueue.isEmpty else { return }
+        let next = commandQueue.removeFirst()
+        startCommand(next.text)
     }
 
     static func title(for directory: String?, shellPath: String) -> String {
@@ -37,6 +87,11 @@ final class TerminalTab: Identifiable, ObservableObject {
         let shellName = URL(fileURLWithPath: shellPath).lastPathComponent
         return shellName.isEmpty ? "zsh" : shellName
     }
+}
+
+struct QueuedCommand: Identifiable, Hashable {
+    let id = UUID()
+    let text: String
 }
 
 final class TabManager: NSObject, ObservableObject {

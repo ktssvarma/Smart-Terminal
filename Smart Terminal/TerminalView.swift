@@ -3,14 +3,37 @@ import AppKit
 import SwiftUI
 import SwiftTerm
 
+enum CommandFieldFocus {
+    static var isActive = false
+    static weak var field: NSTextField?
+
+    static func claim(_ field: NSTextField) {
+        isActive = true
+        self.field = field
+        field.window?.makeFirstResponder(field)
+    }
+
+    static func restoreIfNeeded() {
+        guard isActive, let field, let window = field.window else { return }
+        if window.firstResponder !== field, window.firstResponder !== field.currentEditor() {
+            window.makeFirstResponder(field)
+        }
+    }
+}
+
 final class HostedTerminalView: LocalProcessTerminalView {
     var onReady: (() -> Void)?
+    private var clickMonitor: Any?
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        guard window != nil else { return }
-        DispatchQueue.main.async { [weak self] in
-            self?.onReady?()
+        if window == nil {
+            removeClickMonitor()
+        } else {
+            installClickMonitor()
+            DispatchQueue.main.async { [weak self] in
+                self?.onReady?()
+            }
         }
     }
 
@@ -18,6 +41,29 @@ final class HostedTerminalView: LocalProcessTerminalView {
         super.setFrameSize(newSize)
         if newSize.width > 1, newSize.height > 1 {
             onReady?()
+        }
+    }
+
+    deinit {
+        removeClickMonitor()
+    }
+
+    private func installClickMonitor() {
+        guard clickMonitor == nil else { return }
+        clickMonitor = NSEvent.addLocalMonitorForEvents(matching: .leftMouseDown) { [weak self] event in
+            guard let self, event.window == self.window else { return event }
+            let point = self.convert(event.locationInWindow, from: nil)
+            if self.bounds.contains(point) {
+                CommandFieldFocus.isActive = false
+            }
+            return event
+        }
+    }
+
+    private func removeClickMonitor() {
+        if let clickMonitor {
+            NSEvent.removeMonitor(clickMonitor)
+            self.clickMonitor = nil
         }
     }
 }
@@ -37,15 +83,16 @@ struct TerminalView: NSViewRepresentable {
             ?? NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
         view.nativeBackgroundColor = .black
         view.nativeForegroundColor = NSColor(calibratedWhite: 0.92, alpha: 1)
+        view.wantsLayer = true
+        view.layer?.cornerRadius = AppTheme.terminalCorner
+        view.layer?.cornerCurve = .continuous
+        view.layer?.masksToBounds = true
         view.processDelegate = context.coordinator
         view.autoresizingMask = [NSView.AutoresizingMask.width, NSView.AutoresizingMask.height]
         view.getTerminal().changeHistorySize(5_000)
         session.attach(view)
         view.onReady = { [session] in
             session.startIfNeeded()
-            if context.coordinator.isActive {
-                view.window?.makeFirstResponder(view)
-            }
         }
         return view
     }
@@ -56,7 +103,7 @@ struct TerminalView: NSViewRepresentable {
         session.attach(nsView)
         session.startIfNeeded()
 
-        if isActive, !context.coordinator.isActive {
+        if isActive, !context.coordinator.isActive, !CommandFieldFocus.isActive {
             nsView.window?.makeFirstResponder(nsView)
         }
         context.coordinator.isActive = isActive

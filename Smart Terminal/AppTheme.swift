@@ -11,6 +11,7 @@ enum AppTheme {
     static let closeSize: CGFloat = 12
     static let iconSize: CGFloat = 14
     static let corner: CGFloat = 6
+    static let terminalCorner: CGFloat = 12
 
     static let space1: CGFloat = 4
     static let space2: CGFloat = 8
