@@ -19,9 +19,10 @@ final class TerminalTab: Identifiable, ObservableObject {
     private var isAwaitingCompletion = false
     private var completionFallback: DispatchWorkItem?
 
-    init(id: UUID = UUID(), workingDirectory: String? = nil, isPinned: Bool = false) {
+    init(id: UUID = UUID(), workingDirectory: String? = nil, isPinned: Bool = false, lastCommandAt: Date? = nil) {
         self.id = id
         self.isPinned = isPinned
+        self.lastCommandAt = lastCommandAt
         session = TerminalSession(workingDirectory: workingDirectory)
         currentPath = workingDirectory ?? NSHomeDirectory()
         title = Self.title(for: workingDirectory, shellPath: session.shellPath)
@@ -51,7 +52,7 @@ final class TerminalTab: Identifiable, ObservableObject {
     private func handleCommandRunningChange(_ running: Bool) {
         isCommandRunning = running
         if running {
-            lastCommandAt = Date()
+            markCommandExecuted()
             isAwaitingCompletion = true
             completionFallback?.cancel()
             return
@@ -65,8 +66,13 @@ final class TerminalTab: Identifiable, ObservableObject {
         }
     }
 
-    private func startCommand(_ command: String) {
+    private func markCommandExecuted() {
         lastCommandAt = Date()
+        onStateChange?()
+    }
+
+    private func startCommand(_ command: String) {
+        markCommandExecuted()
         isAwaitingCompletion = true
         session.sendCommand(command)
         scheduleCompletionFallback()
@@ -280,7 +286,8 @@ final class TabManager: NSObject, ObservableObject {
                 PersistedTab(
                     id: tab.id,
                     workingDirectory: tab.session.resolvedWorkingDirectory() ?? tab.session.workingDirectory,
-                    isPinned: tab.isPinned
+                    isPinned: tab.isPinned,
+                    lastCommandAt: tab.lastCommandAt
                 )
             },
             selectedID: selectedID
@@ -304,7 +311,8 @@ final class TabManager: NSObject, ObservableObject {
             TerminalTab(
                 id: record.id,
                 workingDirectory: Self.restoredDirectory(record.workingDirectory),
-                isPinned: record.isPinned
+                isPinned: record.isPinned,
+                lastCommandAt: record.lastCommandAt
             )
         }
         let selectedID = restored.contains(where: { $0.id == snapshot.selectedID })
@@ -329,11 +337,13 @@ private struct PersistedTab: Codable {
     var id: UUID
     var workingDirectory: String?
     var isPinned: Bool
+    var lastCommandAt: Date?
 
-    init(id: UUID, workingDirectory: String?, isPinned: Bool) {
+    init(id: UUID, workingDirectory: String?, isPinned: Bool, lastCommandAt: Date? = nil) {
         self.id = id
         self.workingDirectory = workingDirectory
         self.isPinned = isPinned
+        self.lastCommandAt = lastCommandAt
     }
 
     init(from decoder: Decoder) throws {
@@ -341,6 +351,7 @@ private struct PersistedTab: Codable {
         id = try container.decode(UUID.self, forKey: .id)
         workingDirectory = try container.decodeIfPresent(String.self, forKey: .workingDirectory)
         isPinned = try container.decodeIfPresent(Bool.self, forKey: .isPinned) ?? false
+        lastCommandAt = try container.decodeIfPresent(Date.self, forKey: .lastCommandAt)
     }
 }
 
