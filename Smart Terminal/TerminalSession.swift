@@ -58,18 +58,16 @@ final class TerminalSession {
     }
 
     func updateWorkingDirectory(_ directory: String?) {
-        guard let directory, !directory.isEmpty else { return }
-        workingDirectory = directory
-        onWorkingDirectoryChange?(directory)
+        guard let path = Self.normalizedPath(directory) else { return }
+        publishWorkingDirectory(path)
     }
 
     func resolvedWorkingDirectory() -> String? {
+        if let live = processWorkingDirectory(), FileManager.default.fileExists(atPath: live) {
+            return live
+        }
         if let workingDirectory, FileManager.default.fileExists(atPath: workingDirectory) {
             return workingDirectory
-        }
-        if let live = processWorkingDirectory(), FileManager.default.fileExists(atPath: live) {
-            workingDirectory = live
-            return live
         }
         if let initialDirectory, FileManager.default.fileExists(atPath: initialDirectory) {
             return initialDirectory
@@ -144,6 +142,24 @@ final class TerminalSession {
 
     private func refreshCommandActivity() {
         publishCommandRunning(isForegroundCommandRunning())
+        if let live = processWorkingDirectory(), FileManager.default.fileExists(atPath: live) {
+            publishWorkingDirectory(live)
+        }
+    }
+
+    private func publishWorkingDirectory(_ path: String) {
+        guard path != workingDirectory else { return }
+        workingDirectory = path
+        onWorkingDirectoryChange?(path)
+    }
+
+    private static func normalizedPath(_ directory: String?) -> String? {
+        guard let directory, !directory.isEmpty else { return nil }
+        if directory.hasPrefix("file:"), let url = URL(string: directory), url.isFileURL {
+            let path = url.path
+            return path.isEmpty ? nil : path
+        }
+        return directory
     }
 
     private func publishCommandRunning(_ running: Bool) {

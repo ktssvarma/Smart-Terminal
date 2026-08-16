@@ -12,6 +12,7 @@ final class TerminalTab: Identifiable, ObservableObject {
     @Published var isCommandRunning = false
     @Published var commandDraft = ""
     @Published var commandQueue: [QueuedCommand] = []
+    @Published var currentPath: String
     var onStateChange: (() -> Void)?
 
     private var isAwaitingCompletion = false
@@ -21,9 +22,11 @@ final class TerminalTab: Identifiable, ObservableObject {
         self.id = id
         self.isPinned = isPinned
         session = TerminalSession(workingDirectory: workingDirectory)
+        currentPath = workingDirectory ?? NSHomeDirectory()
         title = Self.title(for: workingDirectory, shellPath: session.shellPath)
         session.onWorkingDirectoryChange = { [weak self] directory in
             guard let self else { return }
+            self.currentPath = directory
             self.title = Self.title(for: directory, shellPath: self.session.shellPath)
             self.onStateChange?()
         }
@@ -50,6 +53,10 @@ final class TerminalTab: Identifiable, ObservableObject {
             isAwaitingCompletion = true
             completionFallback?.cancel()
             return
+        }
+        if let directory = session.resolvedWorkingDirectory() {
+            currentPath = directory
+            title = Self.title(for: directory, shellPath: session.shellPath)
         }
         if isAwaitingCompletion {
             finishCurrentAndRunNext()

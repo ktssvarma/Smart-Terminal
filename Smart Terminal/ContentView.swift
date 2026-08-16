@@ -42,38 +42,46 @@ struct ContentView: View {
 
     var body: some View {
         #if os(macOS)
-        HStack(spacing: 0) {
-            TerminalTabBar(manager: tabs)
+        VStack(spacing: 0) {
+            HStack(spacing: 0) {
+                TerminalTabBar(manager: tabs)
 
-            VStack(spacing: AppTheme.space2) {
-                ZStack {
-                    AppTheme.terminal
-                    ForEach(tabs.tabs) { tab in
-                        TerminalView(session: tab.session, isActive: tab.id == tabs.selectedID)
-                            .opacity(tab.id == tabs.selectedID ? 1 : 0)
-                            .allowsHitTesting(tab.id == tabs.selectedID)
+                VStack(spacing: AppTheme.space2) {
+                    ZStack {
+                        AppTheme.terminal
+                        ForEach(tabs.tabs) { tab in
+                            TerminalView(session: tab.session, isActive: tab.id == tabs.selectedID)
+                                .opacity(tab.id == tabs.selectedID ? 1 : 0)
+                                .allowsHitTesting(tab.id == tabs.selectedID)
+                        }
+                    }
+                    .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+                    .clipShape(RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous))
+                    .overlay(
+                        RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous)
+                            .strokeBorder(isTerminalDropTarget ? Color.white.opacity(0.35) : AppTheme.border, lineWidth: isTerminalDropTarget ? 2 : 1)
+                    )
+                    .dropDestination(for: String.self) { items, _ in
+                        guard let tab = tabs.selectedTab,
+                              let command = items.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+                              !command.isEmpty else { return false }
+                        tab.submitCommand(command)
+                        return true
+                    } isTargeted: { isTerminalDropTarget = $0 }
+
+                    if let tab = tabs.selectedTab {
+                        TerminalCommandField(tab: tab)
                     }
                 }
+                .padding(AppTheme.space2)
                 .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
-                .clipShape(RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous))
-                .overlay(
-                    RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous)
-                        .strokeBorder(isTerminalDropTarget ? Color.white.opacity(0.35) : AppTheme.border, lineWidth: isTerminalDropTarget ? 2 : 1)
-                )
-                .dropDestination(for: String.self) { items, _ in
-                    guard let tab = tabs.selectedTab,
-                          let command = items.first?.trimmingCharacters(in: .whitespacesAndNewlines),
-                          !command.isEmpty else { return false }
-                    tab.submitCommand(command)
-                    return true
-                } isTargeted: { isTerminalDropTarget = $0 }
-
-                if let tab = tabs.selectedTab {
-                    TerminalCommandField(tab: tab)
-                }
             }
-            .padding(AppTheme.space2)
             .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
+
+            if let tab = tabs.selectedTab {
+                WindowStatusBar(tab: tab)
+                    .id(tab.id)
+            }
         }
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         .background(AppTheme.window)
@@ -155,6 +163,28 @@ private struct TerminalCommandField: View {
             }
 
             HStack(spacing: AppTheme.space2) {
+                Button {
+                    showFavourites.toggle()
+                } label: {
+                    Image(systemName: hasFavourites ? "star.fill" : "star")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(hasFavourites ? Color.yellow.opacity(0.85) : AppTheme.textSecondary)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Command favourites")
+                .background(
+                    AnchoredPopover(isPresented: $showFavourites) {
+                        FavouriteCommandsPopover(
+                            tab: tab,
+                            path: currentPath,
+                            onFilled: fillFavourite,
+                            onRun: runFavourite
+                        )
+                    }
+                    .frame(width: 20, height: 20)
+                )
+
                 HStack(spacing: AppTheme.space2) {
                     Text("$")
                         .font(.system(size: 13, weight: .medium, design: .monospaced))
@@ -174,23 +204,9 @@ private struct TerminalCommandField: View {
                     tab.commandDraft = command
                     return true
                 } isTargeted: { isFieldDropTarget = $0 }
-
-                Button {
-                    showFavourites.toggle()
-                } label: {
-                    Image(systemName: hasFavourites ? "star.fill" : "star")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(hasFavourites ? Color.yellow.opacity(0.85) : AppTheme.textSecondary)
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-                .help("Command favourites")
-                .popover(isPresented: $showFavourites, arrowEdge: .top) {
-                    FavouriteCommandsPopover(tab: tab, path: currentPath, onFilled: fillFavourite)
-                }
             }
             .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+            .frame(maxWidth: .infinity, minHeight: AppTheme.newTabHeight, maxHeight: AppTheme.newTabHeight, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
                     .fill(isFieldDropTarget ? AppTheme.fillActive : AppTheme.header)
@@ -231,6 +247,13 @@ private struct TerminalCommandField: View {
         tab.commandDraft = command
         focusAfterFavouritesClose = true
         showFavourites = false
+    }
+
+    private func runFavourite(_ command: String) {
+        showFavourites = false
+        DispatchQueue.main.async {
+            tab.submitCommand(command)
+        }
     }
 
     private func submit() {

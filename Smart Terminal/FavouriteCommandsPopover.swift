@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 struct FavouriteCommandsPopover: View {
@@ -7,6 +8,7 @@ struct FavouriteCommandsPopover: View {
 
     var path: String
     var onFilled: (String) -> Void = { _ in }
+    var onRun: (String) -> Void = { _ in }
 
     private var commands: [FavouriteCommand] {
         store.commands(for: path)
@@ -44,7 +46,7 @@ struct FavouriteCommandsPopover: View {
                             FavouriteCommandRow(
                                 command: command,
                                 onFill: { onFilled(command.command) },
-                                onRun: { tab.submitCommand(command.command) },
+                                onRun: { onRun(command.command) },
                                 onDelete: {
                                     guard CloseConfirmation.confirmDeleteFavouriteCommand(command.command) else { return }
                                     store.remove(command.id, from: path)
@@ -61,7 +63,6 @@ struct FavouriteCommandsPopover: View {
         }
         .padding(AppTheme.space3)
         .frame(width: 360)
-        .fixedSize(horizontal: false, vertical: true)
         .background(AppTheme.window)
     }
 
@@ -147,6 +148,76 @@ private struct FavouriteCommandRow: View {
             guard let value = items.first, let id = UUID(uuidString: value) else { return false }
             onReorder(id)
             return true
+        }
+    }
+}
+
+struct AnchoredPopover<Content: View>: NSViewRepresentable {
+    @Binding var isPresented: Bool
+    var preferredEdge: NSRectEdge = .maxY
+    @ViewBuilder var content: () -> Content
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(isPresented: $isPresented)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.anchor = view
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.anchor = nsView
+        context.coordinator.preferredEdge = preferredEdge
+        context.coordinator.update(content: content(), isPresented: isPresented)
+    }
+
+    final class Coordinator: NSObject, NSPopoverDelegate {
+        var isPresented: Binding<Bool>
+        var preferredEdge: NSRectEdge = .maxY
+        weak var anchor: NSView?
+        private let popover = NSPopover()
+        private var hosting: NSHostingController<Content>?
+
+        init(isPresented: Binding<Bool>) {
+            self.isPresented = isPresented
+            super.init()
+            popover.behavior = .transient
+            popover.animates = false
+            popover.delegate = self
+        }
+
+        func update(content: Content, isPresented: Bool) {
+            if let hosting {
+                hosting.rootView = content
+            }
+            if isPresented {
+                show(content: content)
+            } else {
+                hide()
+            }
+        }
+
+        private func show(content: Content) {
+            guard let anchor, anchor.window != nil, !popover.isShown else { return }
+            let host = hosting ?? NSHostingController(rootView: content)
+            host.rootView = content
+            host.sizingOptions = [.intrinsicContentSize, .preferredContentSize]
+            hosting = host
+            popover.contentViewController = host
+            popover.show(relativeTo: anchor.bounds, of: anchor, preferredEdge: preferredEdge)
+        }
+
+        private func hide() {
+            guard popover.isShown else { return }
+            popover.performClose(nil)
+        }
+
+        func popoverDidClose(_ notification: Notification) {
+            if isPresented.wrappedValue {
+                isPresented.wrappedValue = false
+            }
         }
     }
 }
