@@ -95,23 +95,30 @@ private struct TerminalTabChip: View {
     @State private var isHovering = false
 
     var body: some View {
-        HStack(spacing: 6) {
-            Text(tab.title)
-                .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
-                .lineLimit(1)
-                .frame(maxWidth: .infinity, alignment: .leading)
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(spacing: 6) {
+                Text(tab.title)
+                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+                    .lineLimit(1)
+                    .frame(maxWidth: .infinity, alignment: .leading)
 
-            if isHovering || isSelected {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 8, weight: .bold))
-                        .frame(width: 12, height: 12)
+                if isHovering || isSelected {
+                    Button(action: onClose) {
+                        Image(systemName: "xmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .frame(width: 12, height: 12)
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(.secondary)
                 }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
+            }
+
+            if tab.isCommandRunning {
+                TabCommandProgressBar()
             }
         }
         .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
@@ -123,6 +130,29 @@ private struct TerminalTabChip: View {
         .onTapGesture(perform: onSelect)
         .background(MiddleClickCatcher(action: onClose))
         .help(tab.title)
+    }
+}
+
+private struct TabCommandProgressBar: View {
+    @State private var travel = false
+
+    var body: some View {
+        GeometryReader { geo in
+            let width = max(geo.size.width * 0.38, 18)
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(width: width, height: 2)
+                .offset(x: travel ? geo.size.width - width : 0)
+        }
+        .frame(height: 2)
+        .background(Capsule().fill(Color.primary.opacity(0.12)))
+        .clipShape(Capsule())
+        .onAppear {
+            travel = false
+            withAnimation(.easeInOut(duration: 0.85).repeatForever(autoreverses: true)) {
+                travel = true
+            }
+        }
     }
 }
 

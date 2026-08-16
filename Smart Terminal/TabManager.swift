@@ -8,6 +8,7 @@ final class TerminalTab: Identifiable, ObservableObject {
     let id = UUID()
     let session: TerminalSession
     @Published var title: String
+    @Published var isCommandRunning = false
 
     init(workingDirectory: String? = nil) {
         session = TerminalSession(workingDirectory: workingDirectory)
@@ -15,6 +16,9 @@ final class TerminalTab: Identifiable, ObservableObject {
         session.onWorkingDirectoryChange = { [weak self] directory in
             guard let self else { return }
             self.title = Self.title(for: directory, shellPath: self.session.shellPath)
+        }
+        session.onCommandRunningChange = { [weak self] running in
+            self?.isCommandRunning = running
         }
     }
 
@@ -34,6 +38,7 @@ final class TabManager: NSObject, ObservableObject {
     @Published private(set) var tabs: [TerminalTab]
     @Published var selectedID: UUID
     var onCloseWindow: (() -> Void)?
+    var allowNextWindowClose = false
 
     var selectedTab: TerminalTab? {
         tabs.first { $0.id == selectedID }
@@ -80,7 +85,26 @@ final class TabManager: NSObject, ObservableObject {
     }
 
     func close(_ id: UUID) {
+        guard let tab = tabs.first(where: { $0.id == id }) else { return }
+        if tab.session.isBusy, !CloseConfirmation.confirmCloseTab(title: tab.title, session: tab.session) {
+            return
+        }
+        forceClose(id)
+    }
+
+    func shouldAllowWindowClose() -> Bool {
+        if allowNextWindowClose || CloseConfirmation.isTerminating {
+            allowNextWindowClose = false
+            return true
+        }
+        let busy = tabs.filter(\.session.isBusy)
+        guard !busy.isEmpty else { return true }
+        return CloseConfirmation.confirmCloseWindow(tabs: busy)
+    }
+
+    private func forceClose(_ id: UUID) {
         if tabs.count <= 1 {
+            allowNextWindowClose = true
             tabs.first?.session.stop()
             onCloseWindow?()
             return
@@ -110,6 +134,10 @@ enum WindowTabManagers {
         map.setObject(manager, forKey: window)
     }
 
+    static var all: [TabManager] {
+        (map.objectEnumerator()?.allObjects as? [TabManager]) ?? []
+    }
+
     static var keyWindowManager: TabManager? {
         if let keyWindow = NSApp.keyWindow, let manager = map.object(forKey: keyWindow) {
             return manager
@@ -124,20 +152,34 @@ enum WindowTabManagers {
 struct WindowTabManagerBinder: NSViewRepresentable {
     let manager: TabManager
 
+    func makeCoordinator() -> Coordinator {
+        Coordinator(manager: manager)
+    }
+
     func makeNSView(context: Context) -> NSView {
         let view = NSView()
-        DispatchQueue.main.async {
-            if let window = view.window {
-                WindowTabManagers.bind(manager, to: window)
-            }
-        }
+        context.coordinator.attach(to: view)
         return view
     }
 
     func updateNSView(_ nsView: NSView, context: Context) {
-        DispatchQueue.main.async {
-            if let window = nsView.window {
-                WindowTabManagers.bind(manager, to: window)
+        context.coordinator.manager = manager
+        context.coordinator.attach(to: nsView)
+    }
+
+    final class Coordinator {
+        var manager: TabManager
+        let closeGuard = WindowCloseGuard()
+
+        init(manager: TabManager) {
+            self.manager = manager
+        }
+
+        func attach(to view: NSView) {
+            DispatchQueue.main.async { [weak self, weak view] in
+                guard let self, let window = view?.window else { return }
+                WindowTabManagers.bind(self.manager, to: window)
+                self.closeGuard.attach(to: window, manager: self.manager)
             }
         }
     }

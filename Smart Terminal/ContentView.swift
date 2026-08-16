@@ -7,6 +7,10 @@ import Playgrounds
 #endif
 
 @main struct MyApp: App {
+    #if os(macOS)
+    @NSApplicationDelegateAdaptor(TerminalAppDelegate.self) private var appDelegate
+    #endif
+
     var body: some Scene {
         WindowGroup {
             ContentView()

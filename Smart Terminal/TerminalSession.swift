@@ -11,8 +11,12 @@ final class TerminalSession {
     private(set) var workingDirectory: String?
     var onWorkingDirectoryChange: ((String) -> Void)?
 
+    var onCommandRunningChange: ((Bool) -> Void)?
+
     private weak var terminalView: LocalProcessTerminalView?
     private var didStart = false
+    private var activityTimer: Timer?
+    private var isCommandRunning = false
 
     init(workingDirectory: String? = nil) {
         shellPath = Self.resolveShell()
@@ -37,6 +41,7 @@ final class TerminalSession {
             execName: "-\(shellName)",
             currentDirectory: initialDirectory ?? NSHomeDirectory()
         )
+        startActivityMonitor()
     }
 
     func sendInput(_ data: Data) {
@@ -81,13 +86,74 @@ final class TerminalSession {
         terminalView?.selectAll(nil)
     }
 
+    var isBusy: Bool {
+        isForegroundCommandRunning() || hasListeningPort()
+    }
+
+    func isForegroundCommandRunning() -> Bool {
+        guard let process = terminalView?.process else { return false }
+        let fd = process.childfd
+        let shellPid = process.shellPid
+        guard fd >= 0, shellPid > 0 else { return false }
+
+        let foreground = Self.foregroundProcessGroup(fd: fd)
+        let shellGroup = getpgid(shellPid)
+        guard foreground > 0, shellGroup > 0 else { return false }
+        return foreground != shellGroup
+    }
+
+    func hasListeningPort() -> Bool {
+        guard let pid = terminalView?.process.shellPid, pid > 0 else { return false }
+        return Self.processTree(from: pid).contains { Self.hasListeningTCP(pid: $0) }
+    }
+
     func stop() {
+        stopActivityMonitor()
         terminalView?.terminate()
         didStart = false
+        publishCommandRunning(false)
     }
 
     deinit {
+        stopActivityMonitor()
         terminalView?.terminate()
+    }
+
+    private func startActivityMonitor() {
+        guard activityTimer == nil else { return }
+        let timer = Timer(timeInterval: 0.35, repeats: true) { [weak self] _ in
+            self?.refreshCommandActivity()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        activityTimer = timer
+        refreshCommandActivity()
+    }
+
+    private func stopActivityMonitor() {
+        activityTimer?.invalidate()
+        activityTimer = nil
+    }
+
+    private func refreshCommandActivity() {
+        publishCommandRunning(isForegroundCommandRunning())
+    }
+
+    private func publishCommandRunning(_ running: Bool) {
+        guard running != isCommandRunning else { return }
+        isCommandRunning = running
+        onCommandRunningChange?(running)
+    }
+
+    private static func foregroundProcessGroup(fd: Int32) -> pid_t {
+        let group = tcgetpgrp(fd)
+        if group > 0 {
+            return group
+        }
+        var pgrp: pid_t = 0
+        if ioctl(fd, TIOCGPGRP, &pgrp) == 0, pgrp > 0 {
+            return pgrp
+        }
+        return -1
     }
 
     private func processWorkingDirectory() -> String? {
@@ -123,6 +189,51 @@ final class TerminalSession {
             env["PATH"] = "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
         }
         return env.map { "\($0.key)=\($0.value)" }
+    }
+
+    private static func processTree(from root: pid_t) -> [pid_t] {
+        var seen = Set<pid_t>()
+        var stack = [root]
+        var result: [pid_t] = []
+        while let pid = stack.popLast() {
+            guard pid > 0, seen.insert(pid).inserted else { continue }
+            result.append(pid)
+            stack.append(contentsOf: childPids(of: pid))
+        }
+        return result
+    }
+
+    private static func childPids(of parent: pid_t) -> [pid_t] {
+        var buffer = [pid_t](repeating: 0, count: 128)
+        let bytes = proc_listchildpids(parent, &buffer, Int32(MemoryLayout<pid_t>.stride * buffer.count))
+        guard bytes > 0 else { return [] }
+        let count = Int(bytes) / MemoryLayout<pid_t>.stride
+        return Array(buffer.prefix(count)).filter { $0 > 0 }
+    }
+
+    private static func hasListeningTCP(pid: pid_t) -> Bool {
+        let listSize = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, nil, 0)
+        guard listSize > 0 else { return false }
+
+        let count = Int(listSize) / MemoryLayout<proc_fdinfo>.stride
+        var fds = [proc_fdinfo](repeating: proc_fdinfo(), count: count)
+        let written = proc_pidinfo(pid, PROC_PIDLISTFDS, 0, &fds, listSize)
+        guard written > 0 else { return false }
+
+        let available = Int(written) / MemoryLayout<proc_fdinfo>.stride
+        for index in 0..<available {
+            let fd = fds[index]
+            guard fd.proc_fdtype == UInt32(PROX_FDTYPE_SOCKET) else { continue }
+
+            var info = socket_fdinfo()
+            let infoSize = Int32(MemoryLayout<socket_fdinfo>.stride)
+            let infoWritten = proc_pidfdinfo(pid, fd.proc_fd, PROC_PIDFDSOCKETINFO, &info, infoSize)
+            guard infoWritten >= infoSize else { continue }
+            if info.psi.soi_kind == SOCKINFO_TCP, info.psi.soi_proto.pri_tcp.tcpsi_state == TCPS_LISTEN {
+                return true
+            }
+        }
+        return false
     }
 
     private static func workingDirectory(for pid: pid_t) -> String? {
