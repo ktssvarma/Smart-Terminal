@@ -13,6 +13,7 @@ final class TerminalTab: Identifiable, ObservableObject {
     @Published var commandDraft = ""
     @Published var commandQueue: [QueuedCommand] = []
     @Published var currentPath: String
+    @Published var lastCommandAt: Date?
     var onStateChange: (() -> Void)?
 
     private var isAwaitingCompletion = false
@@ -50,6 +51,7 @@ final class TerminalTab: Identifiable, ObservableObject {
     private func handleCommandRunningChange(_ running: Bool) {
         isCommandRunning = running
         if running {
+            lastCommandAt = Date()
             isAwaitingCompletion = true
             completionFallback?.cancel()
             return
@@ -64,6 +66,7 @@ final class TerminalTab: Identifiable, ObservableObject {
     }
 
     private func startCommand(_ command: String) {
+        lastCommandAt = Date()
         isAwaitingCompletion = true
         session.sendCommand(command)
         scheduleCompletionFallback()

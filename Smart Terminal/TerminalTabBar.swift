@@ -201,6 +201,17 @@ private struct TerminalTabChip: View {
                     .frame(maxWidth: .infinity, alignment: isCollapsed ? .center : .leading)
                     .help(tab.title)
 
+                if !isCollapsed, let lastCommandAt = tab.lastCommandAt {
+                    TimelineView(.periodic(from: .now, by: 30)) { timeline in
+                        Text(compactRelativeTime(from: lastCommandAt, now: timeline.date))
+                            .font(.system(size: 10, weight: .medium, design: .monospaced))
+                            .foregroundStyle(AppTheme.textSecondary)
+                            .lineLimit(1)
+                            .fixedSize()
+                            .help("Last command \(compactRelativeTime(from: lastCommandAt, now: timeline.date))")
+                    }
+                }
+
                 if !isCollapsed {
                     if isHovering || tab.isPinned {
                         Button(action: onPin) {
@@ -256,6 +267,15 @@ private struct TerminalTabChip: View {
         .background(MiddleClickCatcher(action: onClose))
         .background(TabNameTooltip(text: tab.title))
         .help(tab.title)
+    }
+
+    private func compactRelativeTime(from date: Date, now: Date) -> String {
+        let seconds = max(0, now.timeIntervalSince(date))
+        if seconds < 60 { return "now" }
+        if seconds < 3600 { return "\(Int(seconds / 60))m" }
+        if seconds < 86_400 { return "\(Int(seconds / 3600))h" }
+        if seconds < 86_400 * 7 { return "\(Int(seconds / 86_400))d" }
+        return "\(Int(seconds / (86_400 * 7)))w"
     }
 }
 
