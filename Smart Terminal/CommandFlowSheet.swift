@@ -8,115 +8,79 @@ struct FlowStep: Identifiable, Hashable {
     var notifyOn: Set<CommandOutcome> = [.error, .warning]
 }
 
-struct CommandFlowSheet: View {
+struct CommandFlowEditor<LeadingToolbar: View>: View {
     @ObservedObject var tab: TerminalTab
-    @Environment(\.dismiss) private var dismiss
+    @Binding var fillCommand: String
+    var leadingToolbar: LeadingToolbar
     @State private var steps: [FlowStep] = [FlowStep()]
+    @FocusState private var focusedStepID: UUID?
+
+    init(
+        tab: TerminalTab,
+        fillCommand: Binding<String>,
+        @ViewBuilder leadingToolbar: () -> LeadingToolbar
+    ) {
+        self.tab = tab
+        self._fillCommand = fillCommand
+        self.leadingToolbar = leadingToolbar()
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider().overlay(AppTheme.border)
-            ScrollView {
-                VStack(spacing: 0) {
-                    ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
-                        FlowStepCard(
-                            step: binding(for: step.id),
-                            canDelete: steps.count > 1,
-                            onDelete: {
-                                steps.removeAll { $0.id == step.id }
-                                highlightLastStepSuccess()
-                            }
-                        )
-                        if index < steps.count - 1 {
-                            FlowContinuePicker(selection: continueBinding(for: steps[index + 1].id))
-                        } else {
-                            flowExit
-                        }
-                    }
-                    Button(action: addStep) {
-                        Label("Add step", systemImage: "plus")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(AppTheme.textSecondary)
-                            .frame(maxWidth: .infinity)
-                            .padding(.vertical, 10)
-                    }
-                    .buttonStyle(.plain)
-                    .padding(.top, AppTheme.space3)
-                }
-                .padding(AppTheme.space4)
+        VStack(alignment: .leading, spacing: AppTheme.space2) {
+            ForEach(Array(steps.enumerated()), id: \.element.id) { index, step in
+                FlowStepCard(
+                    step: binding(for: step.id),
+                    continueOn: index > 0 ? continueBinding(for: step.id) : nil,
+                    focusedStepID: $focusedStepID,
+                    canDelete: steps.count > 1,
+                    onDelete: {
+                        steps.removeAll { $0.id == step.id }
+                        highlightLastStepSuccess()
+                    },
+                    onSubmit: runFlow
+                )
             }
-            Divider().overlay(AppTheme.border)
-            footer
+
+            HStack(spacing: AppTheme.space2) {
+                leadingToolbar
+
+                Button(action: addStep) {
+                    Label("Add step", systemImage: "plus")
+                        .font(.system(size: 12, weight: .medium))
+                        .foregroundStyle(AppTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+
+                Spacer()
+
+                Button(action: runFlow) {
+                    Text("Run flow")
+                        .font(.system(size: 12, weight: .semibold))
+                        .padding(.horizontal, 10)
+                        .padding(.vertical, 5)
+                        .background(
+                            RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                                .fill(canRun ? AppTheme.fillActive : AppTheme.fillUtility)
+                        )
+                        .foregroundStyle(canRun ? AppTheme.textPrimary : AppTheme.textSecondary)
+                }
+                .buttonStyle(.plain)
+                .disabled(!canRun)
+            }
+            .padding(.top, AppTheme.space2)
         }
-        .frame(minWidth: 520, minHeight: 420)
-        .background(AppTheme.window)
         .onAppear {
-            loadFromQueue()
             highlightLastStepSuccess()
         }
-    }
-
-    private var header: some View {
-        HStack {
-            VStack(alignment: .leading, spacing: 2) {
-                Text("Command Flow")
-                    .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(AppTheme.textPrimary)
-                Text("Run steps in order. Choose when to continue to the next step, or exit.")
-                    .font(.system(size: 11))
-                    .foregroundStyle(AppTheme.textSecondary)
-            }
-            Spacer()
-            Button("Cancel") { dismiss() }
-                .buttonStyle(.plain)
-                .foregroundStyle(AppTheme.textSecondary)
+        .onChange(of: focusedStepID) { _, newValue in
+            CommandFieldFocus.isActive = newValue != nil
         }
-        .padding(AppTheme.space4)
-    }
-
-    private var footer: some View {
-        HStack {
-            Text("Success = 0, warning = 1, error = 2+")
-                .font(.system(size: 11))
-                .foregroundStyle(AppTheme.textSecondary)
-            Spacer()
-            Button(action: runFlow) {
-                Text("Run flow")
-                    .font(.system(size: 12, weight: .semibold))
-                    .padding(.horizontal, 12)
-                    .padding(.vertical, 6)
-                    .background(
-                        RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
-                            .fill(canRun ? AppTheme.fillActive : AppTheme.fillUtility)
-                    )
-                    .foregroundStyle(canRun ? AppTheme.textPrimary : AppTheme.textSecondary)
-            }
-            .buttonStyle(.plain)
-            .disabled(!canRun)
+        .onChange(of: fillCommand) { _, command in
+            let trimmed = command.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !trimmed.isEmpty else { return }
+            applyFilledCommand(trimmed)
+            fillCommand = ""
         }
-        .padding(AppTheme.space4)
-    }
-
-    private var flowExit: some View {
-        VStack(spacing: 2) {
-            Rectangle()
-                .fill(AppTheme.border)
-                .frame(width: 1, height: 10)
-            Text("exit")
-                .font(.system(size: 10, weight: .medium))
-                .foregroundStyle(AppTheme.textSecondary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 3)
-                .background(
-                    Capsule()
-                        .fill(AppTheme.fillUtility)
-                )
-            Rectangle()
-                .fill(AppTheme.border)
-                .frame(width: 1, height: 10)
-        }
-        .frame(maxWidth: .infinity)
     }
 
     private func continueBinding(for id: UUID) -> Binding<CommandOutcome> {
@@ -164,23 +128,13 @@ struct CommandFlowSheet: View {
         }
     }
 
-    private func loadFromQueue() {
-        var loaded: [FlowStep] = []
-        if tab.isCommandRunning || tab.isQueuePaused {
-            loaded.append(contentsOf: tab.commandQueue.map(FlowStep.init))
-        } else if !tab.commandQueue.isEmpty {
-            loaded.append(contentsOf: tab.commandQueue.map(FlowStep.init))
-        }
-        if loaded.isEmpty {
-            steps = [FlowStep()]
+    private func applyFilledCommand(_ command: String) {
+        if let empty = steps.lastIndex(where: { $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }) {
+            steps[empty].text = command
+        } else if let last = steps.indices.last {
+            steps[last].text = command
         } else {
-            steps = loaded.enumerated().map { index, step in
-                var updated = step
-                if index > 0, updated.continueOn.isEmpty {
-                    updated.continueOn = [.success]
-                }
-                return updated
-            }
+            steps = [FlowStep(text: command, notifyOn: [.success, .error, .warning])]
         }
     }
 
@@ -190,18 +144,40 @@ struct CommandFlowSheet: View {
             guard !text.isEmpty else { return nil }
             return QueuedCommand(text: text, continueOn: step.continueOn, notifyOn: step.notifyOn)
         }
+        guard !commands.isEmpty else { return }
         tab.runFlow(commands)
-        dismiss()
+        let firstID = steps.first?.id ?? UUID()
+        steps = [FlowStep(id: firstID)]
+        highlightLastStepSuccess()
+        focusDefaultField(id: firstID)
+    }
+
+    private func focusDefaultField(id: UUID) {
+        CommandFieldFocus.isActive = true
+        focusedStepID = id
+        for delay in [0.0, 0.05, 0.15, 0.3] {
+            DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
+                CommandFieldFocus.isActive = true
+                focusedStepID = id
+            }
+        }
     }
 }
 
 private struct FlowStepCard: View {
     @Binding var step: FlowStep
+    var continueOn: Binding<CommandOutcome>?
+    var focusedStepID: FocusState<UUID?>.Binding
     var canDelete: Bool
     var onDelete: () -> Void
+    var onSubmit: () -> Void
 
     var body: some View {
         HStack(spacing: AppTheme.space2) {
+            if let continueOn {
+                FlowContinuePicker(selection: continueOn)
+            }
+
             TextField("Command", text: $step.text)
                 .textFieldStyle(.plain)
                 .font(.system(size: 13, design: .monospaced))
@@ -212,6 +188,8 @@ private struct FlowStepCard: View {
                     RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
                         .fill(AppTheme.header)
                 )
+                .focused(focusedStepID, equals: step.id)
+                .onSubmit(onSubmit)
 
             notifyIcons
 
@@ -226,7 +204,8 @@ private struct FlowStepCard: View {
                 .help("Remove step")
             }
         }
-        .padding(AppTheme.space3)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 6)
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
@@ -269,46 +248,32 @@ private struct FlowContinuePicker: View {
     @Binding var selection: CommandOutcome
 
     var body: some View {
-        VStack(spacing: 2) {
-            Rectangle()
-                .fill(AppTheme.border)
-                .frame(width: 1, height: 10)
-            Menu {
-                ForEach(CommandOutcome.allCases) { outcome in
-                    Button(outcome.title) {
-                        selection = outcome
-                    }
+        Menu {
+            ForEach(CommandOutcome.allCases) { outcome in
+                Button(outcome.title) {
+                    selection = outcome
                 }
-            } label: {
-                HStack(spacing: 4) {
-                    Image(systemName: "arrow.down")
-                        .font(.system(size: 8, weight: .bold))
-                    Text(selection.title)
-                        .font(.system(size: 10, weight: .medium))
-                    Image(systemName: "chevron.down")
-                        .font(.system(size: 7, weight: .semibold))
-                }
-                .foregroundStyle(selection.color)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 4)
-                .background(
-                    Capsule()
-                        .fill(selection.color.opacity(0.16))
-                )
             }
-            .menuStyle(.borderlessButton)
-            .frame(width: 110)
-            Rectangle()
-                .fill(AppTheme.border)
-                .frame(width: 1, height: 10)
+        } label: {
+            HStack(spacing: 4) {
+                Image(systemName: "arrow.down")
+                    .font(.system(size: 8, weight: .bold))
+                Text(selection.title)
+                    .font(.system(size: 10, weight: .medium))
+                Image(systemName: "chevron.down")
+                    .font(.system(size: 7, weight: .semibold))
+            }
+            .foregroundStyle(selection.color)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 4)
+            .background(
+                Capsule()
+                    .fill(selection.color.opacity(0.16))
+            )
         }
-        .frame(maxWidth: .infinity)
-    }
-}
-
-private extension FlowStep {
-    init(_ command: QueuedCommand) {
-        self.init(id: command.id, text: command.text, continueOn: command.continueOn, notifyOn: command.notifyOn)
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .help("Continue to this step if")
     }
 }
 #endif

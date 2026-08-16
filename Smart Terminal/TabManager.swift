@@ -58,13 +58,13 @@ final class TerminalTab: Identifiable, ObservableObject {
     func runFlow(_ commands: [QueuedCommand]) {
         let steps = commands.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
         guard let first = steps.first else { return }
-        completionFallback?.cancel()
-        completionFallback = nil
-        isResolvingOutcome = false
-        isAwaitingCompletion = false
-        isManagedCommand = false
+        let isBusy = isCommandRunning || isAwaitingCompletion || isResolvingOutcome
+        if isBusy || !commandQueue.isEmpty {
+            first.continueOn = Set(CommandOutcome.allCases)
+            commandQueue.append(contentsOf: steps)
+            return
+        }
         isQueuePaused = false
-        session.clearInputLine()
         commandQueue = Array(steps.dropFirst())
         startCommand(first)
     }

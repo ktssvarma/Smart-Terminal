@@ -137,10 +137,8 @@ struct ContentView: View {
 private struct TerminalCommandField: View {
     @ObservedObject var tab: TerminalTab
     @ObservedObject private var commandFavourites = FavouriteCommandsStore.shared
-    @State private var focusToken = 0
     @State private var showFavourites = false
-    @State private var showFlow = false
-    @State private var focusAfterFavouritesClose = false
+    @State private var fillCommand = ""
     @State private var isFieldDropTarget = false
 
     var body: some View {
@@ -155,79 +153,20 @@ private struct TerminalCommandField: View {
                 ScrollView {
                     VStack(spacing: AppTheme.space1) {
                         ForEach(tab.commandQueue) { command in
-                            QueuedCommandRow(
-                                command: command,
-                                onDelete: {
-                                    DispatchQueue.main.async {
-                                        tab.removeQueuedCommand(command.id)
-                                    }
-                                }
-                            )
+                            QueuedCommandRow(command: command) {
+                                tab.removeQueuedCommand(command.id)
+                            }
                         }
                     }
                 }
                 .frame(maxHeight: 120)
             }
 
-            HStack(spacing: AppTheme.space2) {
-                Button {
-                    showFavourites.toggle()
-                } label: {
-                    Image(systemName: hasFavourites ? "star.fill" : "star")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(hasFavourites ? Color.yellow.opacity(0.85) : AppTheme.textSecondary)
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-                .help("Command favourites")
-                .background(
-                    AnchoredPopover(isPresented: $showFavourites) {
-                        FavouriteCommandsPopover(
-                            tab: tab,
-                            path: currentPath,
-                            onFilled: fillFavourite,
-                            onRun: runFavourite
-                        )
-                    }
-                    .frame(width: 20, height: 20)
-                )
-
-                Button {
-                    showFlow = true
-                } label: {
-                    Image(systemName: "point.3.connected.trianglepath.dotted")
-                        .font(.system(size: 12, weight: .semibold))
-                        .foregroundStyle(AppTheme.textSecondary)
-                        .frame(width: 20, height: 20)
-                }
-                .buttonStyle(.plain)
-                .help("Command flow")
-                .sheet(isPresented: $showFlow) {
-                    CommandFlowSheet(tab: tab)
-                }
-
-                HStack(spacing: AppTheme.space2) {
-                    Text("$")
-                        .font(.system(size: 13, weight: .medium, design: .monospaced))
-                        .foregroundStyle(AppTheme.textSecondary)
-
-                    CommandLineTextField(
-                        text: $tab.commandDraft,
-                        placeholder: placeholder,
-                        focusToken: focusToken,
-                        onSubmit: submit
-                    )
-                }
-                .dropDestination(for: String.self) { items, _ in
-                    guard let command = items.first?.trimmingCharacters(in: .whitespacesAndNewlines),
-                          !command.isEmpty,
-                          UUID(uuidString: command) == nil else { return false }
-                    tab.commandDraft = command
-                    return true
-                } isTargeted: { isFieldDropTarget = $0 }
+            CommandFlowEditor(tab: tab, fillCommand: $fillCommand) {
+                favouritesButton
             }
-            .padding(.horizontal, 10)
-            .frame(maxWidth: .infinity, minHeight: AppTheme.newTabHeight, maxHeight: AppTheme.newTabHeight, alignment: .leading)
+            .padding(8)
+            .frame(maxWidth: .infinity, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
                     .fill(isFieldDropTarget ? AppTheme.fillActive : AppTheme.header)
@@ -236,15 +175,38 @@ private struct TerminalCommandField: View {
                 RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
                     .strokeBorder(isFieldDropTarget ? Color.white.opacity(0.35) : AppTheme.border, lineWidth: isFieldDropTarget ? 2 : 1)
             )
+            .dropDestination(for: String.self) { items, _ in
+                guard let command = items.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+                      !command.isEmpty,
+                      UUID(uuidString: command) == nil else { return false }
+                fillCommand = command
+                return true
+            } isTargeted: { isFieldDropTarget = $0 }
         }
-        .onChange(of: showFavourites) { _, showing in
-            guard !showing, focusAfterFavouritesClose else { return }
-            focusAfterFavouritesClose = false
-            CommandFieldFocus.isActive = true
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
-                focusToken += 1
+    }
+
+    private var favouritesButton: some View {
+        Button {
+            showFavourites.toggle()
+        } label: {
+            Image(systemName: hasFavourites ? "star.fill" : "star")
+                .font(.system(size: 12, weight: .semibold))
+                .foregroundStyle(hasFavourites ? Color.yellow.opacity(0.85) : AppTheme.textSecondary)
+                .frame(width: 20, height: 20)
+        }
+        .buttonStyle(.plain)
+        .help("Command favourites")
+        .background(
+            AnchoredPopover(isPresented: $showFavourites) {
+                FavouriteCommandsPopover(
+                    tab: tab,
+                    path: currentPath,
+                    onFilled: fillFavourite,
+                    onRun: runFavourite
+                )
             }
-        }
+            .frame(width: 20, height: 20)
+        )
     }
 
     private var currentPath: String {
@@ -257,19 +219,8 @@ private struct TerminalCommandField: View {
         !commandFavourites.commands(for: currentPath).isEmpty
     }
 
-    private var placeholder: String {
-        if tab.isQueuePaused {
-            return "Queue paused"
-        }
-        if tab.isCommandRunning || !tab.commandQueue.isEmpty {
-            return "Queue next command"
-        }
-        return "Enter a command"
-    }
-
     private func fillFavourite(_ command: String) {
-        tab.commandDraft = command
-        focusAfterFavouritesClose = true
+        fillCommand = command
         showFavourites = false
     }
 
@@ -278,15 +229,6 @@ private struct TerminalCommandField: View {
         DispatchQueue.main.async {
             tab.submitCommand(command)
         }
-    }
-
-    private func submit() {
-        let command = tab.commandDraft.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !command.isEmpty else { return }
-        tab.submitCommand(command)
-        tab.commandDraft = ""
-        CommandFieldFocus.isActive = true
-        focusToken += 1
     }
 }
 
@@ -350,81 +292,6 @@ private struct QueuedCommandRow: View {
             RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
                 .strokeBorder(AppTheme.border, lineWidth: 1)
         )
-    }
-}
-
-private struct CommandLineTextField: NSViewRepresentable {
-    @Binding var text: String
-    var placeholder: String
-    var focusToken: Int
-    var onSubmit: () -> Void
-
-    func makeCoordinator() -> Coordinator {
-        Coordinator(text: $text, onSubmit: onSubmit)
-    }
-
-    func makeNSView(context: Context) -> NSTextField {
-        let field = NSTextField(string: text)
-        field.isBordered = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
-        field.textColor = NSColor(calibratedWhite: 0.92, alpha: 1)
-        field.placeholderString = placeholder
-        field.delegate = context.coordinator
-        field.lineBreakMode = .byTruncatingTail
-        return field
-    }
-
-    func updateNSView(_ nsView: NSTextField, context: Context) {
-        context.coordinator.text = $text
-        context.coordinator.onSubmit = onSubmit
-        nsView.placeholderString = placeholder
-        if nsView.stringValue != text {
-            nsView.stringValue = text
-        }
-        if context.coordinator.focusToken != focusToken {
-            context.coordinator.focusToken = focusToken
-            CommandFieldFocus.claim(nsView)
-            for delay in [0.0, 0.05, 0.15, 0.3] {
-                DispatchQueue.main.asyncAfter(deadline: .now() + delay) {
-                    CommandFieldFocus.restoreIfNeeded()
-                }
-            }
-        }
-    }
-
-    final class Coordinator: NSObject, NSTextFieldDelegate {
-        var text: Binding<String>
-        var onSubmit: () -> Void
-        var focusToken = 0
-
-        init(text: Binding<String>, onSubmit: @escaping () -> Void) {
-            self.text = text
-            self.onSubmit = onSubmit
-        }
-
-        func controlTextDidBeginEditing(_ obj: Notification) {
-            CommandFieldFocus.isActive = true
-        }
-
-        func controlTextDidChange(_ obj: Notification) {
-            guard let field = obj.object as? NSTextField else { return }
-            text.wrappedValue = field.stringValue
-        }
-
-        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
-            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
-                CommandFieldFocus.isActive = true
-                onSubmit()
-                if let field = control as? NSTextField {
-                    field.stringValue = ""
-                    text.wrappedValue = ""
-                }
-                return true
-            }
-            return false
-        }
     }
 }
 
