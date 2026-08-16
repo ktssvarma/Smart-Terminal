@@ -14,10 +14,15 @@ final class TerminalTab: Identifiable, ObservableObject {
     @Published var commandQueue: [QueuedCommand] = []
     @Published var currentPath: String
     @Published var lastCommandAt: Date?
+    @Published var isQueuePaused = false
     var onStateChange: (() -> Void)?
 
     private var isAwaitingCompletion = false
+    private var isResolvingOutcome = false
     private var completionFallback: DispatchWorkItem?
+    private var activeCommandText = ""
+    private var activeNotifyOn: Set<CommandOutcome> = []
+    private var isManagedCommand = false
 
     init(id: UUID = UUID(), workingDirectory: String? = nil, isPinned: Bool = false, lastCommandAt: Date? = nil) {
         self.id = id
@@ -42,17 +47,34 @@ final class TerminalTab: Identifiable, ObservableObject {
     }
 
     func submitCommand(_ command: String) {
-        if isCommandRunning || isAwaitingCompletion || !commandQueue.isEmpty {
-            commandQueue.append(QueuedCommand(text: command))
+        let item = QueuedCommand(text: command)
+        if isCommandRunning || isAwaitingCompletion || isResolvingOutcome || !commandQueue.isEmpty {
+            commandQueue.append(item)
             return
         }
-        startCommand(command)
+        startCommand(item)
+    }
+
+    func runFlow(_ commands: [QueuedCommand]) {
+        let steps = commands.filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard let first = steps.first else { return }
+        completionFallback?.cancel()
+        completionFallback = nil
+        isResolvingOutcome = false
+        isAwaitingCompletion = false
+        isManagedCommand = false
+        isQueuePaused = false
+        session.clearInputLine()
+        commandQueue = Array(steps.dropFirst())
+        startCommand(first)
     }
 
     private func handleCommandRunningChange(_ running: Bool) {
         isCommandRunning = running
+        if isResolvingOutcome { return }
         if running {
             markCommandExecuted()
+            guard isManagedCommand else { return }
             isAwaitingCompletion = true
             completionFallback?.cancel()
             return
@@ -71,10 +93,16 @@ final class TerminalTab: Identifiable, ObservableObject {
         onStateChange?()
     }
 
-    private func startCommand(_ command: String) {
+    private func startCommand(_ command: QueuedCommand) {
+        let text = command.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        isQueuePaused = false
+        isManagedCommand = true
+        activeCommandText = text
+        activeNotifyOn = command.notifyOn
         markCommandExecuted()
         isAwaitingCompletion = true
-        session.sendCommand(command)
+        session.sendCommand(text)
         scheduleCompletionFallback()
     }
 
@@ -89,17 +117,42 @@ final class TerminalTab: Identifiable, ObservableObject {
     }
 
     private func finishCurrentAndRunNext() {
+        guard !isResolvingOutcome else { return }
         isAwaitingCompletion = false
         completionFallback?.cancel()
         completionFallback = nil
-        while !commandQueue.isEmpty {
-            let next = commandQueue.removeFirst()
-            let text = next.text.trimmingCharacters(in: .whitespacesAndNewlines)
-            if !text.isEmpty {
-                startCommand(text)
-                return
+        isResolvingOutcome = true
+        let notifyOn = activeNotifyOn
+        isManagedCommand = false
+        session.probeLastExitCode { [weak self] code in
+            guard let self else { return }
+            self.isResolvingOutcome = false
+            let output = self.session.endOutputCapture()
+            let outcome = CommandOutcome.from(exitCode: code, output: output)
+            if notifyOn.contains(outcome) {
+                CommandFlowSounds.play(outcome)
             }
+            self.continueQueue(after: outcome)
         }
+    }
+
+    private func continueQueue(after outcome: CommandOutcome) {
+        while !commandQueue.isEmpty {
+            let next = commandQueue[0]
+            let text = next.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if text.isEmpty {
+                commandQueue.removeFirst()
+                continue
+            }
+            if next.continueOn.contains(outcome) {
+                commandQueue.removeFirst()
+                startCommand(next)
+            } else {
+                isQueuePaused = true
+            }
+            return
+        }
+        isQueuePaused = false
     }
 
     static func title(for directory: String?, shellPath: String) -> String {
@@ -114,12 +167,95 @@ final class TerminalTab: Identifiable, ObservableObject {
     }
 }
 
-final class QueuedCommand: Identifiable {
-    let id = UUID()
-    var text: String
+enum CommandOutcome: String, CaseIterable, Hashable, Identifiable {
+    case success
+    case warning
+    case error
 
-    init(text: String) {
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .success: return "success"
+        case .warning: return "warning"
+        case .error: return "error"
+        }
+    }
+
+    var iconName: String {
+        switch self {
+        case .success: return "checkmark.circle"
+        case .warning: return "exclamationmark.triangle"
+        case .error: return "xmark.octagon"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .success: return Color(red: 0.35, green: 0.78, blue: 0.45)
+        case .warning: return Color(red: 0.95, green: 0.76, blue: 0.20)
+        case .error: return Color(red: 0.95, green: 0.35, blue: 0.35)
+        }
+    }
+
+    static func from(exitCode: Int?, output: String = "") -> CommandOutcome {
+        let text = output.lowercased()
+        let hasError = containsError(text)
+        let hasWarning = containsWarning(text)
+
+        if hasError {
+            return .error
+        }
+        if hasWarning {
+            return .warning
+        }
+        guard let exitCode else { return .error }
+        if exitCode == 0 { return .success }
+        if exitCode == 1 { return .warning }
+        return .error
+    }
+
+    private static func containsWarning(_ text: String) -> Bool {
+        text.contains("warning") || text.contains("⚠") || text.contains("warn")
+    }
+
+    private static func containsError(_ text: String) -> Bool {
+        let stripped = text.replacingOccurrences(
+            of: #"\b0\s+errors?\b"#,
+            with: "",
+            options: .regularExpression
+        )
+        return stripped.contains("error")
+            || stripped.contains("failed")
+            || stripped.contains("fatal")
+    }
+}
+
+final class QueuedCommand: Identifiable {
+    let id: UUID
+    var text: String
+    var continueOn: Set<CommandOutcome>
+    var notifyOn: Set<CommandOutcome>
+
+    init(
+        id: UUID = UUID(),
+        text: String,
+        continueOn: Set<CommandOutcome> = Set(CommandOutcome.allCases),
+        notifyOn: Set<CommandOutcome> = []
+    ) {
+        self.id = id
         self.text = text
+        self.continueOn = continueOn
+        self.notifyOn = notifyOn
+    }
+
+    var continueHint: String? {
+        if continueOn == Set(CommandOutcome.allCases) {
+            return nil
+        }
+        let names = CommandOutcome.allCases.filter { continueOn.contains($0) }.map(\.title)
+        guard !names.isEmpty else { return "paused unless edited" }
+        return "→ " + names.joined(separator: ", ")
     }
 }
 

@@ -139,11 +139,18 @@ private struct TerminalCommandField: View {
     @ObservedObject private var commandFavourites = FavouriteCommandsStore.shared
     @State private var focusToken = 0
     @State private var showFavourites = false
+    @State private var showFlow = false
     @State private var focusAfterFavouritesClose = false
     @State private var isFieldDropTarget = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.space1) {
+            if tab.isQueuePaused, !tab.commandQueue.isEmpty {
+                Text("Queue paused")
+                    .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AppTheme.textSecondary)
+            }
+
             if !tab.commandQueue.isEmpty {
                 ScrollView {
                     VStack(spacing: AppTheme.space1) {
@@ -184,6 +191,20 @@ private struct TerminalCommandField: View {
                     }
                     .frame(width: 20, height: 20)
                 )
+
+                Button {
+                    showFlow = true
+                } label: {
+                    Image(systemName: "point.3.connected.trianglepath.dotted")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AppTheme.textSecondary)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Command flow")
+                .sheet(isPresented: $showFlow) {
+                    CommandFlowSheet(tab: tab)
+                }
 
                 HStack(spacing: AppTheme.space2) {
                     Text("$")
@@ -237,6 +258,9 @@ private struct TerminalCommandField: View {
     }
 
     private var placeholder: String {
+        if tab.isQueuePaused {
+            return "Queue paused"
+        }
         if tab.isCommandRunning || !tab.commandQueue.isEmpty {
             return "Queue next command"
         }
@@ -282,6 +306,13 @@ private struct QueuedCommandRow: View {
             Text("Queued")
                 .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(AppTheme.textSecondary)
+
+            if let hint = command.continueHint {
+                Text(hint)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(AppTheme.textSecondary)
+                    .lineLimit(1)
+            }
 
             TextField("Command", text: $draft)
                 .textFieldStyle(.plain)

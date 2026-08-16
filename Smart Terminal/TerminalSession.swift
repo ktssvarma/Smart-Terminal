@@ -12,6 +12,9 @@ final class TerminalSession {
     var onWorkingDirectoryChange: ((String) -> Void)?
 
     var onCommandRunningChange: ((Bool) -> Void)?
+    private(set) var lastExitCode: Int?
+    private var isCapturingOutput = false
+    private var capturedOutput = ""
 
     private weak var terminalView: LocalProcessTerminalView?
     private var didStart = false
@@ -50,6 +53,66 @@ final class TerminalSession {
     }
 
     func sendCommand(_ command: String) {
+        lastExitCode = nil
+        beginOutputCapture()
+        clearInputLine()
+        sendLine(command)
+    }
+
+    func beginOutputCapture() {
+        capturedOutput = ""
+        isCapturingOutput = true
+    }
+
+    func appendCapturedOutput(_ text: String) {
+        guard isCapturingOutput, !text.isEmpty else { return }
+        capturedOutput.append(text)
+        if capturedOutput.count > 80_000 {
+            capturedOutput.removeFirst(capturedOutput.count - 60_000)
+        }
+    }
+
+    func endOutputCapture() -> String {
+        isCapturingOutput = false
+        return capturedOutput
+    }
+
+    func probeLastExitCode(timeout: TimeInterval = 0.8, completion: @escaping (Int?) -> Void) {
+        lastExitCode = nil
+        clearInputLine()
+        sendLine("echo __ST_EXIT:$?__")
+        waitForExitCode(timeout: timeout, completion: completion)
+    }
+
+    func clearInputLine() {
+        sendInput(Data([0x15]))
+    }
+
+    func acceptExitCode(_ code: Int) {
+        lastExitCode = code
+    }
+
+    func waitForExitCode(timeout: TimeInterval = 0.4, completion: @escaping (Int?) -> Void) {
+        if let lastExitCode {
+            completion(lastExitCode)
+            return
+        }
+        let started = Date()
+        func poll() {
+            if let lastExitCode {
+                completion(lastExitCode)
+                return
+            }
+            if Date().timeIntervalSince(started) >= timeout {
+                completion(nil)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: poll)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: poll)
+    }
+
+    private func sendLine(_ command: String) {
         var line = command
         if !line.hasSuffix("\r"), !line.hasSuffix("\n") {
             line += "\r"

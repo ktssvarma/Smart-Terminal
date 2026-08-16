@@ -24,7 +24,25 @@ enum CommandFieldFocus {
 
 final class HostedTerminalView: LocalProcessTerminalView {
     var onReady: (() -> Void)?
+    var onExitCode: ((Int) -> Void)?
+    var onOutput: ((String) -> Void)?
     private var clickMonitor: Any?
+    private let exitScanner = ExitMarkerScanner()
+
+    override func dataReceived(slice: ArraySlice<UInt8>) {
+        let result = exitScanner.ingest(slice)
+        if let code = result.code {
+            DispatchQueue.main.async { [weak self] in
+                self?.onExitCode?(code)
+            }
+        }
+        if let text = String(bytes: result.visible, encoding: .utf8), !text.isEmpty {
+            DispatchQueue.main.async { [weak self] in
+                self?.onOutput?(text)
+            }
+        }
+        super.dataReceived(slice: result.visible[...])
+    }
 
     override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
@@ -92,6 +110,12 @@ struct TerminalView: NSViewRepresentable {
         view.autoresizingMask = [NSView.AutoresizingMask.width, NSView.AutoresizingMask.height]
         view.getTerminal().changeHistorySize(5_000)
         session.attach(view)
+        view.onExitCode = { [session] code in
+            session.acceptExitCode(code)
+        }
+        view.onOutput = { [session] text in
+            session.appendCapturedOutput(text)
+        }
         view.onReady = { [session] in
             session.startIfNeeded()
         }
@@ -101,6 +125,12 @@ struct TerminalView: NSViewRepresentable {
     func updateNSView(_ nsView: HostedTerminalView, context: Context) {
         context.coordinator.session = session
         nsView.processDelegate = context.coordinator
+        nsView.onExitCode = { [session] code in
+            session.acceptExitCode(code)
+        }
+        nsView.onOutput = { [session] text in
+            session.appendCapturedOutput(text)
+        }
         session.attach(nsView)
         session.startIfNeeded()
 
@@ -130,6 +160,80 @@ struct TerminalView: NSViewRepresentable {
             let code = exitCode.map(String.init) ?? "?"
             source.feed(text: "\r\n[Process completed with code \(code)]\r\n")
         }
+    }
+}
+
+final class ExitMarkerScanner {
+    private var buffer: [UInt8] = []
+    private let start = Array("__ST_EXIT:".utf8)
+    private let end = Array("__".utf8)
+
+    func ingest(_ slice: ArraySlice<UInt8>) -> (visible: [UInt8], code: Int?) {
+        buffer.append(contentsOf: slice)
+        var visible: [UInt8] = []
+        var code: Int?
+        var index = 0
+        while index < buffer.count {
+            if match(start, at: index) {
+                let numberStart = index + start.count
+                if let markerEnd = completeMarkerEnd(from: numberStart) {
+                    let digits = buffer[numberStart..<markerEnd - end.count]
+                    if let parsed = Int(String(bytes: digits, encoding: .utf8) ?? "") {
+                        code = parsed
+                    }
+                    index = markerEnd
+                    continue
+                }
+                if isPossiblyIncomplete(from: numberStart) {
+                    buffer = Array(buffer[index...])
+                    return (visible, code)
+                }
+            }
+            if buffer.count - index < start.count, isPrefix(Array(buffer[index...]), of: start) {
+                buffer = Array(buffer[index...])
+                return (visible, code)
+            }
+            visible.append(buffer[index])
+            index += 1
+        }
+        buffer.removeAll(keepingCapacity: true)
+        return (visible, code)
+    }
+
+    private func match(_ pattern: [UInt8], at index: Int) -> Bool {
+        guard index + pattern.count <= buffer.count else { return false }
+        return zip(buffer[index..<index + pattern.count], pattern).allSatisfy { $0 == $1 }
+    }
+
+    private func completeMarkerEnd(from numberStart: Int) -> Int? {
+        var index = numberStart
+        if index < buffer.count, buffer[index] == 45 {
+            index += 1
+        }
+        let digitsStart = index
+        while index < buffer.count, buffer[index] >= 48, buffer[index] <= 57 {
+            index += 1
+        }
+        guard index > digitsStart, match(end, at: index) else { return nil }
+        return index + end.count
+    }
+
+    private func isPossiblyIncomplete(from numberStart: Int) -> Bool {
+        if numberStart >= buffer.count { return true }
+        var index = numberStart
+        if buffer[index] == 45 {
+            index += 1
+            if index >= buffer.count { return true }
+        }
+        while index < buffer.count, buffer[index] >= 48, buffer[index] <= 57 {
+            index += 1
+        }
+        if index >= buffer.count { return true }
+        return isPrefix(Array(buffer[index...]), of: end)
+    }
+
+    private func isPrefix(_ value: [UInt8], of pattern: [UInt8]) -> Bool {
+        zip(value, pattern).allSatisfy { $0 == $1 }
     }
 }
 #endif
