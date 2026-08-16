@@ -32,6 +32,30 @@ enum CloseConfirmation {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    static func confirmCloseAllTabs(count: Int, hasBusy: Bool) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Close all unpinned tabs?"
+        var info = "This will close \(count) unpinned tab\(count == 1 ? "" : "s"). Pinned tabs will stay open."
+        if hasBusy {
+            info += " Running commands in those tabs will be stopped."
+        }
+        alert.informativeText = info
+        alert.addButton(withTitle: "Close All")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
+    static func confirmClosePinnedTab(title: String) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Close pinned tab “\(title)”?"
+        alert.informativeText = "This tab is pinned. Closing it will remove it from the sidebar."
+        alert.addButton(withTitle: "Close Tab")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     static func confirmDeleteFavourite(name: String) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning

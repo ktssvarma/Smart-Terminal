@@ -22,7 +22,10 @@ struct TerminalTabBar: View {
                             isCollapsed: isCollapsed,
                             isSelected: tab.id == manager.selectedID,
                             onSelect: { manager.select(tab.id) },
-                            onClose: { manager.close(tab.id) }
+                            onPin: { manager.togglePin(tab.id) },
+                            onClose: { manager.close(tab.id) },
+                            onCloseAll: { manager.closeAll() },
+                            canCloseAll: manager.tabs.contains { !$0.isPinned }
                         )
                     }
                 }
@@ -172,7 +175,10 @@ private struct TerminalTabChip: View {
     let isCollapsed: Bool
     let isSelected: Bool
     let onSelect: () -> Void
+    let onPin: () -> Void
     let onClose: () -> Void
+    let onCloseAll: () -> Void
+    let canCloseAll: Bool
 
     @State private var isHovering = false
     @State private var isCloseHovering = false
@@ -196,15 +202,27 @@ private struct TerminalTabChip: View {
                     .help(tab.title)
 
                 if !isCollapsed {
-                    Button(action: onClose) {
-                        Image(systemName: "xmark")
-                            .font(.system(size: 9, weight: .bold))
-                            .frame(width: AppTheme.closeSize, height: AppTheme.closeSize)
+                    if isHovering || tab.isPinned {
+                        Button(action: onPin) {
+                            Image(systemName: tab.isPinned ? "pin.fill" : "pin")
+                                .font(.system(size: 8, weight: .semibold))
+                                .frame(width: AppTheme.closeSize, height: AppTheme.closeSize)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(AppTheme.textSecondary)
+                        .help(tab.isPinned ? "Unpin Tab" : "Pin Tab")
                     }
-                    .buttonStyle(.plain)
-                    .foregroundStyle(isCloseHovering ? Color(red: 1, green: 0.38, blue: 0.38) : AppTheme.textSecondary)
-                    .opacity(isHovering || isSelected ? 1 : 0)
-                    .onHover { isCloseHovering = $0 }
+
+                    if !tab.isPinned, isHovering || isSelected {
+                        Button(action: onClose) {
+                            Image(systemName: "xmark")
+                                .font(.system(size: 9, weight: .bold))
+                                .frame(width: AppTheme.closeSize, height: AppTheme.closeSize)
+                        }
+                        .buttonStyle(.plain)
+                        .foregroundStyle(isCloseHovering ? Color(red: 1, green: 0.38, blue: 0.38) : AppTheme.textSecondary)
+                        .onHover { isCloseHovering = $0 }
+                    }
                 }
             }
 
@@ -229,6 +247,12 @@ private struct TerminalTabChip: View {
         .animation(AppTheme.motion, value: isSelected)
         .onHover { isHovering = $0 }
         .onTapGesture(perform: onSelect)
+        .contextMenu {
+            Button(tab.isPinned ? "Unpin Tab" : "Pin Tab", action: onPin)
+            Button("Close Tab", action: onClose)
+            Button("Close All Tabs", action: onCloseAll)
+                .disabled(!canCloseAll)
+        }
         .background(MiddleClickCatcher(action: onClose))
         .background(TabNameTooltip(text: tab.title))
         .help(tab.title)
