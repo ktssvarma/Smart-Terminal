@@ -41,6 +41,8 @@ struct PersistentWindowDimensions: NSViewRepresentable {
         }
 
         private func configure(_ window: NSWindow) {
+            applyGlassChrome(to: window)
+
             if !didRestore {
                 didRestore = true
                 window.setFrameUsingName(autosaveName)
@@ -60,6 +62,37 @@ struct PersistentWindowDimensions: NSViewRepresentable {
                 center.addObserver(forName: NSWindow.willCloseNotification, object: window, queue: .main, using: save)
             ]
         }
+
+        private func applyGlassChrome(to window: NSWindow) {
+            window.isOpaque = false
+            window.backgroundColor = .clear
+            window.titlebarAppearsTransparent = true
+            window.titlebarSeparatorStyle = .none
+            window.styleMask.insert(.fullSizeContentView)
+        }
     }
+}
+
+struct HiddenWindowToolbarBackground: ViewModifier {
+    func body(content: Content) -> some View {
+        if #available(macOS 26.0, *) {
+            content.toolbarBackgroundVisibility(.hidden, for: .windowToolbar)
+        } else {
+            content.toolbarBackground(.hidden, for: .windowToolbar)
+        }
+    }
+}
+
+struct GlassWindowBackground: NSViewRepresentable {
+    func makeNSView(context: Context) -> NSView {
+        let view = NSVisualEffectView()
+        view.material = .underWindowBackground
+        view.blendingMode = .behindWindow
+        view.state = .active
+        view.isEmphasized = false
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {}
 }
 #endif
