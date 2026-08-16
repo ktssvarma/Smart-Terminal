@@ -5,7 +5,11 @@ import Playgrounds
     var body: some Scene {
         WindowGroup {
             ContentView()
+                #if os(macOS)
+                .background(PersistentWindowDimensions())
+                #endif
         }
+        .defaultSize(width: 800, height: 500)
     }
 }
 
