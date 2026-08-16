@@ -37,6 +37,7 @@ struct ContentView: View {
     #if os(macOS)
     @StateObject private var tabs = TabManager()
     @AppStorage("SmartTerminal.sidebarCollapsed") private var isCollapsed = false
+    @State private var isTerminalDropTarget = false
     #endif
 
     var body: some View {
@@ -57,8 +58,15 @@ struct ContentView: View {
                 .clipShape(RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous))
                 .overlay(
                     RoundedRectangle(cornerRadius: AppTheme.terminalCorner, style: .continuous)
-                        .strokeBorder(AppTheme.border, lineWidth: 1)
+                        .strokeBorder(isTerminalDropTarget ? Color.white.opacity(0.35) : AppTheme.border, lineWidth: isTerminalDropTarget ? 2 : 1)
                 )
+                .dropDestination(for: String.self) { items, _ in
+                    guard let tab = tabs.selectedTab,
+                          let command = items.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !command.isEmpty else { return false }
+                    tab.submitCommand(command)
+                    return true
+                } isTargeted: { isTerminalDropTarget = $0 }
 
                 if let tab = tabs.selectedTab {
                     TerminalCommandField(tab: tab)
@@ -120,7 +128,11 @@ struct ContentView: View {
 #if os(macOS)
 private struct TerminalCommandField: View {
     @ObservedObject var tab: TerminalTab
+    @ObservedObject private var commandFavourites = FavouriteCommandsStore.shared
     @State private var focusToken = 0
+    @State private var showFavourites = false
+    @State private var focusAfterFavouritesClose = false
+    @State private var isFieldDropTarget = false
 
     var body: some View {
         VStack(alignment: .leading, spacing: AppTheme.space1) {
@@ -128,26 +140,13 @@ private struct TerminalCommandField: View {
                 ScrollView {
                     VStack(spacing: AppTheme.space1) {
                         ForEach(tab.commandQueue) { command in
-                            HStack(spacing: AppTheme.space2) {
-                                Text("Queued")
-                                    .font(.system(size: 11, weight: .medium))
-                                    .foregroundStyle(AppTheme.textSecondary)
-                                Text(command.text)
-                                    .font(.system(size: 13, design: .monospaced))
-                                    .foregroundStyle(AppTheme.textPrimary)
-                                    .lineLimit(1)
-                                    .truncationMode(.tail)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                            .padding(.horizontal, 10)
-                            .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
-                            .background(
-                                RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
-                                    .fill(AppTheme.header)
-                            )
-                            .overlay(
-                                RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
-                                    .strokeBorder(AppTheme.border, lineWidth: 1)
+                            QueuedCommandRow(
+                                command: command,
+                                onDelete: {
+                                    DispatchQueue.main.async {
+                                        tab.removeQueuedCommand(command.id)
+                                    }
+                                }
                             )
                         }
                     }
@@ -156,28 +155,69 @@ private struct TerminalCommandField: View {
             }
 
             HStack(spacing: AppTheme.space2) {
-                Text("$")
-                    .font(.system(size: 13, weight: .medium, design: .monospaced))
-                    .foregroundStyle(AppTheme.textSecondary)
+                HStack(spacing: AppTheme.space2) {
+                    Text("$")
+                        .font(.system(size: 13, weight: .medium, design: .monospaced))
+                        .foregroundStyle(AppTheme.textSecondary)
 
-                CommandLineTextField(
-                    text: $tab.commandDraft,
-                    placeholder: placeholder,
-                    focusToken: focusToken,
-                    onSubmit: submit
-                )
+                    CommandLineTextField(
+                        text: $tab.commandDraft,
+                        placeholder: placeholder,
+                        focusToken: focusToken,
+                        onSubmit: submit
+                    )
+                }
+                .dropDestination(for: String.self) { items, _ in
+                    guard let command = items.first?.trimmingCharacters(in: .whitespacesAndNewlines),
+                          !command.isEmpty,
+                          UUID(uuidString: command) == nil else { return false }
+                    tab.commandDraft = command
+                    return true
+                } isTargeted: { isFieldDropTarget = $0 }
+
+                Button {
+                    showFavourites.toggle()
+                } label: {
+                    Image(systemName: hasFavourites ? "star.fill" : "star")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(hasFavourites ? Color.yellow.opacity(0.85) : AppTheme.textSecondary)
+                        .frame(width: 20, height: 20)
+                }
+                .buttonStyle(.plain)
+                .help("Command favourites")
+                .popover(isPresented: $showFavourites, arrowEdge: .top) {
+                    FavouriteCommandsPopover(tab: tab, path: currentPath, onFilled: fillFavourite)
+                }
             }
             .padding(.horizontal, 10)
             .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
             .background(
                 RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
-                    .fill(AppTheme.header)
+                    .fill(isFieldDropTarget ? AppTheme.fillActive : AppTheme.header)
             )
             .overlay(
                 RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
-                    .strokeBorder(AppTheme.border, lineWidth: 1)
+                    .strokeBorder(isFieldDropTarget ? Color.white.opacity(0.35) : AppTheme.border, lineWidth: isFieldDropTarget ? 2 : 1)
             )
         }
+        .onChange(of: showFavourites) { _, showing in
+            guard !showing, focusAfterFavouritesClose else { return }
+            focusAfterFavouritesClose = false
+            CommandFieldFocus.isActive = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) {
+                focusToken += 1
+            }
+        }
+    }
+
+    private var currentPath: String {
+        tab.session.resolvedWorkingDirectory()
+            ?? tab.session.workingDirectory
+            ?? NSHomeDirectory()
+    }
+
+    private var hasFavourites: Bool {
+        !commandFavourites.commands(for: currentPath).isEmpty
     }
 
     private var placeholder: String {
@@ -187,6 +227,12 @@ private struct TerminalCommandField: View {
         return "Enter a command"
     }
 
+    private func fillFavourite(_ command: String) {
+        tab.commandDraft = command
+        focusAfterFavouritesClose = true
+        showFavourites = false
+    }
+
     private func submit() {
         let command = tab.commandDraft.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !command.isEmpty else { return }
@@ -194,6 +240,62 @@ private struct TerminalCommandField: View {
         tab.commandDraft = ""
         CommandFieldFocus.isActive = true
         focusToken += 1
+    }
+}
+
+private struct QueuedCommandRow: View {
+    let command: QueuedCommand
+    var onDelete: () -> Void
+    @State private var draft: String
+
+    init(command: QueuedCommand, onDelete: @escaping () -> Void) {
+        self.command = command
+        self.onDelete = onDelete
+        _draft = State(initialValue: command.text)
+    }
+
+    var body: some View {
+        HStack(spacing: AppTheme.space2) {
+            Text("Queued")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AppTheme.textSecondary)
+
+            TextField("Command", text: $draft)
+                .textFieldStyle(.plain)
+                .font(.system(size: 13, design: .monospaced))
+                .foregroundStyle(AppTheme.textPrimary)
+                .onChange(of: draft) { _, newValue in
+                    command.text = newValue
+                }
+                .onSubmit {
+                    let text = draft.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if text.isEmpty {
+                        onDelete()
+                    } else {
+                        draft = text
+                        command.text = text
+                    }
+                }
+
+            Button(action: onDelete) {
+                Image(systemName: "xmark")
+                    .font(.system(size: 9, weight: .bold))
+                    .frame(width: 14, height: 14)
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(AppTheme.textSecondary)
+            .help("Remove from queue")
+        }
+        .padding(.horizontal, 10)
+        .frame(maxWidth: .infinity, minHeight: 36, alignment: .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                .fill(AppTheme.header)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                .strokeBorder(AppTheme.border, lineWidth: 1)
+        )
     }
 }
 

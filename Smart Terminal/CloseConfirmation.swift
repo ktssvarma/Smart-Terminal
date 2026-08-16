@@ -56,6 +56,16 @@ enum CloseConfirmation {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    static func confirmDeleteFavouriteCommand(_ command: String) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete this command?"
+        alert.informativeText = "“\(command)” will be removed from favourites for this path."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     static func confirmDeleteFavourite(name: String) -> Bool {
         let alert = NSAlert()
         alert.alertStyle = .warning

@@ -10,11 +10,12 @@ enum CommandFieldFocus {
     static func claim(_ field: NSTextField) {
         isActive = true
         self.field = field
-        field.window?.makeFirstResponder(field)
+        guard let window = field.window, window.isVisible else { return }
+        window.makeFirstResponder(field)
     }
 
     static func restoreIfNeeded() {
-        guard isActive, let field, let window = field.window else { return }
+        guard isActive, let field, let window = field.window, window.isVisible else { return }
         if window.firstResponder !== field, window.firstResponder !== field.currentEditor() {
             window.makeFirstResponder(field)
         }

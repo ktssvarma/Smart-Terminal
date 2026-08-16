@@ -32,6 +32,10 @@ final class TerminalTab: Identifiable, ObservableObject {
         }
     }
 
+    func removeQueuedCommand(_ id: UUID) {
+        commandQueue.removeAll { $0.id == id }
+    }
+
     func submitCommand(_ command: String) {
         if isCommandRunning || isAwaitingCompletion || !commandQueue.isEmpty {
             commandQueue.append(QueuedCommand(text: command))
@@ -72,9 +76,14 @@ final class TerminalTab: Identifiable, ObservableObject {
         isAwaitingCompletion = false
         completionFallback?.cancel()
         completionFallback = nil
-        guard !commandQueue.isEmpty else { return }
-        let next = commandQueue.removeFirst()
-        startCommand(next.text)
+        while !commandQueue.isEmpty {
+            let next = commandQueue.removeFirst()
+            let text = next.text.trimmingCharacters(in: .whitespacesAndNewlines)
+            if !text.isEmpty {
+                startCommand(text)
+                return
+            }
+        }
     }
 
     static func title(for directory: String?, shellPath: String) -> String {
@@ -89,9 +98,13 @@ final class TerminalTab: Identifiable, ObservableObject {
     }
 }
 
-struct QueuedCommand: Identifiable, Hashable {
+final class QueuedCommand: Identifiable {
     let id = UUID()
-    let text: String
+    var text: String
+
+    init(text: String) {
+        self.text = text
+    }
 }
 
 final class TabManager: NSObject, ObservableObject {
