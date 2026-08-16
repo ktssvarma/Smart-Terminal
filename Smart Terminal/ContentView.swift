@@ -1,4 +1,7 @@
 import SwiftUI
+#if os(macOS)
+import AppKit
+#endif
 #if canImport(Playgrounds)
 import Playgrounds
 #endif
@@ -16,21 +19,49 @@ import Playgrounds
                 #endif
         }
         .defaultSize(width: 800, height: 500)
+        #if os(macOS)
+        .commands {
+            TerminalCommands()
+        }
+        #endif
     }
 }
 
 struct ContentView: View {
     #if os(macOS)
-    @State private var session = TerminalSession()
+    @StateObject private var tabs = TabManager()
     #endif
 
     var body: some View {
         #if os(macOS)
-        TerminalView(session: session)
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .onDisappear {
-                session.stop()
+        VStack(spacing: 0) {
+            TerminalTabBar(manager: tabs)
+            ZStack {
+                ForEach(tabs.tabs) { tab in
+                    TerminalView(session: tab.session, isActive: tab.id == tabs.selectedID)
+                        .opacity(tab.id == tabs.selectedID ? 1 : 0)
+                        .allowsHitTesting(tab.id == tabs.selectedID)
+                }
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        }
+        .background(WindowTabManagerBinder(manager: tabs))
+        .onAppear {
+            tabs.onCloseWindow = {
+                NSApp.keyWindow?.performClose(nil)
+            }
+            DispatchQueue.main.async {
+                tabs.selectedTab?.session.focus()
+            }
+        }
+        .onChange(of: tabs.selectedID) { _, _ in
+            DispatchQueue.main.async {
+                tabs.selectedTab?.session.focus()
+            }
+        }
+        .onDisappear {
+            tabs.shutdown()
+        }
         #else
         Text("Smart Terminal is available on macOS.")
             .frame(maxWidth: .infinity, maxHeight: .infinity)

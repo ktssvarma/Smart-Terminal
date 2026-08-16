@@ -24,6 +24,7 @@ final class HostedTerminalView: LocalProcessTerminalView {
 
 struct TerminalView: NSViewRepresentable {
     let session: TerminalSession
+    var isActive: Bool = true
 
     func makeCoordinator() -> Coordinator {
         Coordinator(session: session)
@@ -37,18 +38,29 @@ struct TerminalView: NSViewRepresentable {
         view.getTerminal().changeHistorySize(5_000)
         session.attach(view)
         view.onReady = { [session] in
-            view.window?.makeFirstResponder(view)
             session.startIfNeeded()
+            if context.coordinator.isActive {
+                view.window?.makeFirstResponder(view)
+            }
         }
         return view
     }
 
     func updateNSView(_ nsView: HostedTerminalView, context: Context) {
+        context.coordinator.session = session
+        nsView.processDelegate = context.coordinator
+        session.attach(nsView)
         session.startIfNeeded()
+
+        if isActive, !context.coordinator.isActive {
+            nsView.window?.makeFirstResponder(nsView)
+        }
+        context.coordinator.isActive = isActive
     }
 
     final class Coordinator: LocalProcessTerminalViewDelegate {
-        let session: TerminalSession
+        var session: TerminalSession
+        var isActive = true
 
         init(session: TerminalSession) {
             self.session = session
@@ -56,16 +68,15 @@ struct TerminalView: NSViewRepresentable {
 
         func sizeChanged(source: LocalProcessTerminalView, newCols: Int, newRows: Int) {}
 
-        func setTerminalTitle(source: LocalProcessTerminalView, title: String) {
-            source.window?.title = title.isEmpty ? "Smart Terminal" : title
-        }
+        func setTerminalTitle(source: LocalProcessTerminalView, title: String) {}
 
-        func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {}
+        func hostCurrentDirectoryUpdate(source: SwiftTerm.TerminalView, directory: String?) {
+            session.updateWorkingDirectory(directory)
+        }
 
         func processTerminated(source: SwiftTerm.TerminalView, exitCode: Int32?) {
             let code = exitCode.map(String.init) ?? "?"
-            let message = "\r\n[Process completed with code \(code)]\r\n"
-            source.feed(text: message)
+            source.feed(text: "\r\n[Process completed with code \(code)]\r\n")
         }
     }
 }
