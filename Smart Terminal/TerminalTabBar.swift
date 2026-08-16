@@ -8,52 +8,34 @@ struct TerminalTabBar: View {
     @State private var isAddingFavourite = false
 
     var body: some View {
-        HStack(spacing: 4) {
-            ForEach(manager.tabs) { tab in
-                TerminalTabChip(
-                    tab: tab,
-                    isSelected: tab.id == manager.selectedID,
-                    onSelect: { manager.select(tab.id) },
-                    onClose: { manager.close(tab.id) }
-                )
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Spacer(minLength: 0)
+                newTabMenu
             }
+            .padding(.top, 6)
+            .padding(.horizontal, 8)
+            .frame(height: 36)
 
-            Menu {
-                Button("Home") {
-                    manager.createTab(at: NSHomeDirectory())
-                }
-
-                if !favourites.favourites.isEmpty {
-                    Divider()
-                    ForEach(favourites.favourites) { favourite in
-                        Button(favourite.name) {
-                            manager.createTab(at: favourite.path)
-                        }
+            ScrollView {
+                VStack(spacing: 2) {
+                    ForEach(manager.tabs) { tab in
+                        TerminalTabChip(
+                            tab: tab,
+                            isSelected: tab.id == manager.selectedID,
+                            onSelect: { manager.select(tab.id) },
+                            onClose: { manager.close(tab.id) }
+                        )
                     }
                 }
-
-                Divider()
-
-                Button("Add Favourite…") {
-                    isAddingFavourite = true
-                }
-            } label: {
-                Image(systemName: "plus")
-                    .font(.system(size: 11, weight: .semibold))
-                    .frame(width: 22, height: 22)
-                    .contentShape(Rectangle())
+                .padding(.horizontal, 6)
             }
-            .menuStyle(.borderlessButton)
-            .menuIndicator(.hidden)
-            .frame(width: 22, height: 22)
-            .foregroundStyle(.secondary)
-            .help("New Tab")
 
             Spacer(minLength: 0)
         }
-        .padding(.leading, 78)
-        .padding(.trailing, 8)
-        .frame(height: 30)
+        .frame(width: 176)
+        .padding(.bottom, 8)
+        .background(Color.primary.opacity(0.03))
         .sheet(isPresented: $isAddingFavourite) {
             AddFavouriteSheet(
                 onCancel: { isAddingFavourite = false },
@@ -68,6 +50,39 @@ struct TerminalTabBar: View {
                 }
             )
         }
+    }
+
+    private var newTabMenu: some View {
+        Menu {
+            Button("Home") {
+                manager.createTab(at: NSHomeDirectory())
+            }
+
+            if !favourites.favourites.isEmpty {
+                Divider()
+                ForEach(favourites.favourites) { favourite in
+                    Button(favourite.name) {
+                        manager.createTab(at: favourite.path)
+                    }
+                }
+            }
+
+            Divider()
+
+            Button("Add Favourite…") {
+                isAddingFavourite = true
+            }
+        } label: {
+            Image(systemName: "plus")
+                .font(.system(size: 11, weight: .semibold))
+                .frame(width: 22, height: 22)
+                .contentShape(Rectangle())
+        }
+        .menuStyle(.borderlessButton)
+        .menuIndicator(.hidden)
+        .frame(width: 22, height: 22)
+        .foregroundStyle(.secondary)
+        .help("New Tab")
     }
 }
 
@@ -84,6 +99,7 @@ private struct TerminalTabChip: View {
             Text(tab.title)
                 .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
                 .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
 
             if isHovering || isSelected {
                 Button(action: onClose) {
@@ -95,8 +111,8 @@ private struct TerminalTabChip: View {
                 .foregroundStyle(.secondary)
             }
         }
-        .padding(.horizontal, 10)
-        .frame(height: 22)
+        .padding(.horizontal, 8)
+        .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
         .background(
             RoundedRectangle(cornerRadius: 6, style: .continuous)
                 .fill(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(isHovering ? 0.06 : 0))

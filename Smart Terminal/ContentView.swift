@@ -34,8 +34,9 @@ struct ContentView: View {
 
     var body: some View {
         #if os(macOS)
-        VStack(spacing: 0) {
+        HStack(spacing: 0) {
             TerminalTabBar(manager: tabs)
+            Divider()
             ZStack {
                 ForEach(tabs.tabs) { tab in
                     TerminalView(session: tab.session, isActive: tab.id == tabs.selectedID)

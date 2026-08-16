@@ -68,6 +68,7 @@ struct PersistentWindowDimensions: NSViewRepresentable {
             window.backgroundColor = .clear
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
+            window.titleVisibility = .hidden
             window.styleMask.insert(.fullSizeContentView)
         }
     }
