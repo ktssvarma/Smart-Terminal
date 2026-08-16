@@ -20,10 +20,21 @@ import Playgrounds
 }
 
 struct ContentView: View {
+    #if os(macOS)
+    @State private var session = TerminalSession()
+    #endif
+
     var body: some View {
-        Text("Hello, world!")
-            .padding()
+        #if os(macOS)
+        TerminalView(session: session)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .onDisappear {
+                session.stop()
+            }
+        #else
+        Text("Smart Terminal is available on macOS.")
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        #endif
     }
 }
 
