@@ -32,7 +32,11 @@ struct TerminalView: NSViewRepresentable {
 
     func makeNSView(context: Context) -> HostedTerminalView {
         let view = HostedTerminalView(frame: .zero)
-        view.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        view.font = NSFont(name: "SF Mono", size: 14)
+            ?? NSFont(name: "Menlo", size: 14)
+            ?? NSFont.monospacedSystemFont(ofSize: 14, weight: .regular)
+        view.nativeBackgroundColor = .black
+        view.nativeForegroundColor = NSColor(calibratedWhite: 0.92, alpha: 1)
         view.processDelegate = context.coordinator
         view.autoresizingMask = [NSView.AutoresizingMask.width, NSView.AutoresizingMask.height]
         view.getTerminal().changeHistorySize(5_000)

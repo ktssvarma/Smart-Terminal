@@ -32,6 +32,16 @@ enum CloseConfirmation {
         return alert.runModal() == .alertFirstButtonReturn
     }
 
+    static func confirmDeleteFavourite(name: String) -> Bool {
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = "Delete “\(name)”?"
+        alert.informativeText = "This favourite will be removed from the New Tab menu. Open tabs are not affected."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     static func confirmApplicationQuit() -> NSApplication.TerminateReply {
         let busy = WindowTabManagers.all.flatMap(\.tabs).filter(\.session.isBusy)
         guard !busy.isEmpty else { return .terminateNow }

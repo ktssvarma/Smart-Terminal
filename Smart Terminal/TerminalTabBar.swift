@@ -5,37 +5,43 @@ import SwiftUI
 struct TerminalTabBar: View {
     @ObservedObject var manager: TabManager
     @ObservedObject private var favourites = FavouritePathsStore.shared
+    @AppStorage("SmartTerminal.sidebarCollapsed") private var isCollapsed = false
     @State private var isAddingFavourite = false
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack {
-                Spacer(minLength: 0)
-                newTabMenu
-            }
-            .padding(.top, 6)
-            .padding(.horizontal, 8)
-            .frame(height: 36)
+    private var sidebarWidth: CGFloat {
+        isCollapsed ? AppTheme.sidebarCollapsedWidth : AppTheme.sidebarWidth
+    }
 
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
             ScrollView {
-                VStack(spacing: 2) {
+                VStack(spacing: AppTheme.space1) {
                     ForEach(manager.tabs) { tab in
                         TerminalTabChip(
                             tab: tab,
+                            isCollapsed: isCollapsed,
                             isSelected: tab.id == manager.selectedID,
                             onSelect: { manager.select(tab.id) },
                             onClose: { manager.close(tab.id) }
                         )
                     }
                 }
-                .padding(.horizontal, 6)
+                .padding(.horizontal, AppTheme.space2)
+                .padding(.top, AppTheme.space2)
+                .padding(.bottom, AppTheme.space1)
+                .frame(maxWidth: .infinity, alignment: .leading)
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
 
-            Spacer(minLength: 0)
+            newTabMenu
+                .padding(.horizontal, AppTheme.space2)
+                .padding(.top, AppTheme.space1)
+                .padding(.bottom, AppTheme.space2)
         }
-        .frame(width: 176)
-        .padding(.bottom, 8)
-        .background(Color.primary.opacity(0.03))
+        .frame(width: sidebarWidth)
+        .frame(maxHeight: .infinity)
+        .background(AppTheme.sidebar)
+        .animation(AppTheme.motion, value: isCollapsed)
         .sheet(isPresented: $isAddingFavourite) {
             AddFavouriteSheet(
                 onCancel: { isAddingFavourite = false },
@@ -53,63 +59,152 @@ struct TerminalTabBar: View {
     }
 
     private var newTabMenu: some View {
-        Menu {
-            Button("Home") {
-                manager.createTab(at: NSHomeDirectory())
-            }
+        Button(action: showNewTabMenu) {
+            NewTabButton(isCollapsed: isCollapsed)
+        }
+        .buttonStyle(.plain)
+        .help("New Tab")
+    }
 
-            if !favourites.favourites.isEmpty {
-                Divider()
-                ForEach(favourites.favourites) { favourite in
-                    Button(favourite.name) {
-                        manager.createTab(at: favourite.path)
-                    }
+    private func showNewTabMenu() {
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+
+        let home = menu.addItem(withTitle: "Home", action: nil, keyEquivalent: "")
+        home.target = NewTabMenuActions.shared
+        home.representedObject = NewTabMenuActions.Handler { [manager] in
+            manager.createTab(at: NSHomeDirectory())
+        }
+
+        if !favourites.favourites.isEmpty {
+            menu.addItem(.separator())
+            for favourite in favourites.favourites {
+                let item = menu.addItem(withTitle: favourite.name, action: nil, keyEquivalent: "")
+                item.target = NewTabMenuActions.shared
+                item.representedObject = NewTabMenuActions.Handler { [manager] in
+                    manager.createTab(at: favourite.path)
                 }
             }
-
-            Divider()
-
-            Button("Add Favourite…") {
-                isAddingFavourite = true
-            }
-        } label: {
-            Image(systemName: "plus")
-                .font(.system(size: 11, weight: .semibold))
-                .frame(width: 22, height: 22)
-                .contentShape(Rectangle())
         }
-        .menuStyle(.borderlessButton)
-        .menuIndicator(.hidden)
-        .frame(width: 22, height: 22)
-        .foregroundStyle(.secondary)
-        .help("New Tab")
+
+        menu.addItem(.separator())
+        let add = menu.addItem(withTitle: "Add Favourite…", action: nil, keyEquivalent: "")
+        add.target = NewTabMenuActions.shared
+        add.representedObject = NewTabMenuActions.Handler {
+            isAddingFavourite = true
+        }
+
+        if !favourites.favourites.isEmpty {
+            let deleteMenu = NSMenu()
+            for favourite in favourites.favourites {
+                let item = deleteMenu.addItem(withTitle: favourite.name, action: nil, keyEquivalent: "")
+                item.target = NewTabMenuActions.shared
+                item.representedObject = NewTabMenuActions.Handler { [favourites] in
+                    guard CloseConfirmation.confirmDeleteFavourite(name: favourite.name) else { return }
+                    favourites.remove(favourite.id)
+                }
+            }
+            let delete = menu.addItem(withTitle: "Delete Favourite", action: nil, keyEquivalent: "")
+            delete.submenu = deleteMenu
+        }
+
+        NewTabMenuActions.shared.install(on: menu)
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+}
+
+private final class NewTabMenuActions: NSObject {
+    static let shared = NewTabMenuActions()
+
+    final class Handler {
+        let run: () -> Void
+        init(_ run: @escaping () -> Void) { self.run = run }
+    }
+
+    func install(on menu: NSMenu) {
+        for item in menu.items {
+            if let submenu = item.submenu {
+                install(on: submenu)
+            }
+            guard item.representedObject is Handler else { continue }
+            item.target = self
+            item.action = #selector(invoke(_:))
+        }
+    }
+
+    @objc func invoke(_ sender: NSMenuItem) {
+        (sender.representedObject as? Handler)?.run()
+    }
+}
+
+private struct NewTabButton: View {
+    let isCollapsed: Bool
+    @State private var isHovering = false
+
+    var body: some View {
+        HStack(spacing: AppTheme.space2) {
+            Text("+")
+                .font(.system(size: 13, weight: .medium))
+            if !isCollapsed {
+                Text("New Tab")
+                    .font(.system(size: 13, weight: .medium))
+                    .lineLimit(1)
+            }
+        }
+        .foregroundStyle(AppTheme.textSecondary)
+        .padding(.horizontal, isCollapsed ? AppTheme.space1 : 10)
+        .frame(maxWidth: .infinity, minHeight: AppTheme.newTabHeight, alignment: isCollapsed ? .center : .leading)
+        .background(
+            RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                .fill(isHovering ? AppTheme.fillUtilityHover : AppTheme.fillUtility)
+        )
+        .contentShape(RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous))
+        .onHover { hovering in
+            withAnimation(AppTheme.motion) {
+                isHovering = hovering
+            }
+        }
     }
 }
 
 private struct TerminalTabChip: View {
     @ObservedObject var tab: TerminalTab
+    let isCollapsed: Bool
     let isSelected: Bool
     let onSelect: () -> Void
     let onClose: () -> Void
 
     @State private var isHovering = false
+    @State private var isCloseHovering = false
+
+    private var displayTitle: String {
+        if isCollapsed {
+            let letter = tab.title.trimmingCharacters(in: .whitespacesAndNewlines).first
+            return letter.map { String($0).uppercased() } ?? "?"
+        }
+        return tab.title
+    }
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
-            HStack(spacing: 6) {
-                Text(tab.title)
-                    .font(.system(size: 12, weight: isSelected ? .semibold : .regular))
+        VStack(alignment: isCollapsed ? .center : .leading, spacing: AppTheme.space1) {
+            HStack(spacing: AppTheme.space2) {
+                Text(displayTitle)
+                    .font(.system(size: 13, weight: isSelected ? .medium : .regular))
                     .lineLimit(1)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .truncationMode(.tail)
+                    .frame(maxWidth: .infinity, alignment: isCollapsed ? .center : .leading)
+                    .help(tab.title)
 
-                if isHovering || isSelected {
+                if !isCollapsed {
                     Button(action: onClose) {
                         Image(systemName: "xmark")
-                            .font(.system(size: 8, weight: .bold))
-                            .frame(width: 12, height: 12)
+                            .font(.system(size: 9, weight: .bold))
+                            .frame(width: AppTheme.closeSize, height: AppTheme.closeSize)
                     }
                     .buttonStyle(.plain)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(isCloseHovering ? Color(red: 1, green: 0.38, blue: 0.38) : AppTheme.textSecondary)
+                    .opacity(isHovering || isSelected ? 1 : 0)
+                    .onHover { isCloseHovering = $0 }
                 }
             }
 
@@ -117,18 +212,25 @@ private struct TerminalTabChip: View {
                 TabCommandProgressBar()
             }
         }
-        .padding(.horizontal, 8)
-        .padding(.vertical, 6)
-        .frame(maxWidth: .infinity, minHeight: 26, alignment: .leading)
+        .padding(.horizontal, isCollapsed ? AppTheme.space1 : 10)
+        .padding(.vertical, AppTheme.space2)
+        .frame(maxWidth: .infinity, minHeight: AppTheme.tabHeight, alignment: isCollapsed ? .center : .leading)
         .background(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .fill(isSelected ? Color.primary.opacity(0.14) : Color.primary.opacity(isHovering ? 0.06 : 0))
+            RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                .fill(isSelected ? AppTheme.fillActive : (isHovering ? AppTheme.fillHover : AppTheme.fillIdle))
         )
-        .foregroundStyle(isSelected ? Color.primary : Color.secondary)
-        .contentShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
+        .overlay(
+            RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                .strokeBorder(isSelected ? AppTheme.border : Color.clear, lineWidth: 1)
+        )
+        .foregroundStyle(isSelected ? AppTheme.textPrimary : AppTheme.textSecondary)
+        .contentShape(RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous))
+        .animation(AppTheme.motion, value: isHovering)
+        .animation(AppTheme.motion, value: isSelected)
         .onHover { isHovering = $0 }
         .onTapGesture(perform: onSelect)
         .background(MiddleClickCatcher(action: onClose))
+        .background(TabNameTooltip(text: tab.title))
         .help(tab.title)
     }
 }
@@ -138,14 +240,14 @@ private struct TabCommandProgressBar: View {
 
     var body: some View {
         GeometryReader { geo in
-            let width = max(geo.size.width * 0.38, 18)
+            let width = max(geo.size.width * 0.38, 16)
             Capsule()
-                .fill(Color.accentColor)
+                .fill(Color.white.opacity(0.45))
                 .frame(width: width, height: 2)
                 .offset(x: travel ? geo.size.width - width : 0)
         }
         .frame(height: 2)
-        .background(Capsule().fill(Color.primary.opacity(0.12)))
+        .background(Capsule().fill(Color.white.opacity(0.10)))
         .clipShape(Capsule())
         .onAppear {
             travel = false
@@ -153,6 +255,44 @@ private struct TabCommandProgressBar: View {
                 travel = true
             }
         }
+    }
+}
+
+private struct TabNameTooltip: NSViewRepresentable {
+    let text: String
+
+    func makeNSView(context: Context) -> TooltipView {
+        let view = TooltipView()
+        view.text = text
+        return view
+    }
+
+    func updateNSView(_ nsView: TooltipView, context: Context) {
+        nsView.text = text
+    }
+}
+
+private final class TooltipView: NSView {
+    var text: String = "" {
+        didSet { toolTip = text }
+    }
+
+    override func hitTest(_ point: NSPoint) -> NSView? {
+        nil
+    }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        trackingAreas.forEach(removeTrackingArea)
+        addTrackingArea(
+            NSTrackingArea(
+                rect: bounds,
+                options: [.mouseEnteredAndExited, .activeInKeyWindow, .inVisibleRect],
+                owner: self,
+                userInfo: nil
+            )
+        )
+        toolTip = text
     }
 }
 

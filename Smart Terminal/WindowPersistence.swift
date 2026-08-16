@@ -64,11 +64,13 @@ struct PersistentWindowDimensions: NSViewRepresentable {
         }
 
         private func applyGlassChrome(to window: NSWindow) {
-            window.isOpaque = false
-            window.backgroundColor = .clear
+            window.appearance = NSAppearance(named: .darkAqua)
+            window.isOpaque = true
+            window.backgroundColor = NSColor(calibratedWhite: 0.11, alpha: 1)
             window.titlebarAppearsTransparent = true
             window.titlebarSeparatorStyle = .none
             window.titleVisibility = .hidden
+            window.toolbarStyle = .unifiedCompact
             window.styleMask.insert(.fullSizeContentView)
         }
     }
@@ -86,14 +88,14 @@ struct HiddenWindowToolbarBackground: ViewModifier {
 
 struct GlassWindowBackground: NSViewRepresentable {
     func makeNSView(context: Context) -> NSView {
-        let view = NSVisualEffectView()
-        view.material = .underWindowBackground
-        view.blendingMode = .behindWindow
-        view.state = .active
-        view.isEmphasized = false
+        let view = NSView()
+        view.wantsLayer = true
+        view.layer?.backgroundColor = NSColor(calibratedWhite: 0.11, alpha: 1).cgColor
         return view
     }
 
-    func updateNSView(_ nsView: NSView, context: Context) {}
+    func updateNSView(_ nsView: NSView, context: Context) {
+        nsView.layer?.backgroundColor = NSColor(calibratedWhite: 0.11, alpha: 1).cgColor
+    }
 }
 #endif

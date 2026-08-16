@@ -33,6 +33,11 @@ final class FavouritePathsStore: ObservableObject {
         persist()
     }
 
+    func remove(_ id: UUID) {
+        favourites.removeAll { $0.id == id }
+        persist()
+    }
+
     static func expandedPath(_ path: String) -> String {
         (path as NSString).expandingTildeInPath.trimmingCharacters(in: .whitespacesAndNewlines)
     }
