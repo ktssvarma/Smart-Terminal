@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 struct TerminalCommands: Commands {
@@ -16,18 +17,35 @@ struct TerminalCommands: Commands {
         }
 
         CommandGroup(replacing: .pasteboard) {
+            Button("Cut") {
+                NSApp.sendAction(#selector(NSText.cut(_:)), to: nil, from: nil)
+            }
+            .keyboardShortcut("x", modifiers: .command)
+
             Button("Copy") {
-                WindowTabManagers.keyWindowManager?.selectedTab?.session.copySelection()
+                if CommandFieldFocus.isEditingText {
+                    NSApp.sendAction(#selector(NSText.copy(_:)), to: nil, from: nil)
+                } else {
+                    WindowTabManagers.keyWindowManager?.selectedTab?.session.copySelection()
+                }
             }
             .keyboardShortcut("c", modifiers: .command)
 
             Button("Paste") {
-                WindowTabManagers.keyWindowManager?.selectedTab?.session.pasteClipboard()
+                if CommandFieldFocus.isEditingText {
+                    NSApp.sendAction(#selector(NSText.paste(_:)), to: nil, from: nil)
+                } else {
+                    WindowTabManagers.keyWindowManager?.selectedTab?.session.pasteClipboard()
+                }
             }
             .keyboardShortcut("v", modifiers: .command)
 
             Button("Select All") {
-                WindowTabManagers.keyWindowManager?.selectedTab?.session.selectAllText()
+                if CommandFieldFocus.isEditingText {
+                    NSApp.sendAction(#selector(NSText.selectAll(_:)), to: nil, from: nil)
+                } else {
+                    WindowTabManagers.keyWindowManager?.selectedTab?.session.selectAllText()
+                }
             }
             .keyboardShortcut("a", modifiers: .command)
         }

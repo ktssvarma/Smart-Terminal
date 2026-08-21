@@ -7,10 +7,22 @@ enum CommandFieldFocus {
     static var isActive = false
     static weak var field: NSTextField?
 
+    static var isEditingText: Bool {
+        if isActive { return true }
+        let responder = NSApp.keyWindow?.firstResponder
+        if let textView = responder as? NSTextView {
+            return textView.isFieldEditor
+        }
+        return responder is NSTextField
+    }
+
     static func claim(_ field: NSTextField) {
         isActive = true
         self.field = field
         guard let window = field.window, window.isVisible else { return }
+        if window.firstResponder === field || window.firstResponder === field.currentEditor() {
+            return
+        }
         window.makeFirstResponder(field)
     }
 

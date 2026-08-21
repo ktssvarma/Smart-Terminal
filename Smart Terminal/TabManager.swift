@@ -15,6 +15,7 @@ final class TerminalTab: Identifiable, ObservableObject {
     @Published var currentPath: String
     @Published var lastCommandAt: Date?
     @Published var isQueuePaused = false
+    @Published private(set) var commandHistory: [String] = []
     var onStateChange: (() -> Void)?
 
     private var isAwaitingCompletion = false
@@ -88,6 +89,14 @@ final class TerminalTab: Identifiable, ObservableObject {
         }
     }
 
+    private func recordCommand(_ text: String) {
+        guard commandHistory.last != text else { return }
+        commandHistory.append(text)
+        if commandHistory.count > 200 {
+            commandHistory.removeFirst(commandHistory.count - 200)
+        }
+    }
+
     private func markCommandExecuted() {
         lastCommandAt = Date()
         onStateChange?()
@@ -100,6 +109,7 @@ final class TerminalTab: Identifiable, ObservableObject {
         isManagedCommand = true
         activeCommandText = text
         activeNotifyOn = command.notifyOn
+        recordCommand(text)
         markCommandExecuted()
         isAwaitingCompletion = true
         session.sendCommand(text)

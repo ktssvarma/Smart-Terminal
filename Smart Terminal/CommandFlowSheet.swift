@@ -1,4 +1,5 @@
 #if os(macOS)
+import AppKit
 import SwiftUI
 
 struct FlowStep: Identifiable, Hashable {
@@ -32,6 +33,7 @@ struct CommandFlowEditor<LeadingToolbar: View>: View {
                     step: binding(for: step.id),
                     continueOn: index > 0 ? continueBinding(for: step.id) : nil,
                     focusedStepID: $focusedStepID,
+                    history: tab.commandHistory,
                     canDelete: steps.count > 1,
                     onDelete: {
                         steps.removeAll { $0.id == step.id }
@@ -168,6 +170,7 @@ private struct FlowStepCard: View {
     @Binding var step: FlowStep
     var continueOn: Binding<CommandOutcome>?
     var focusedStepID: FocusState<UUID?>.Binding
+    var history: [String]
     var canDelete: Bool
     var onDelete: () -> Void
     var onSubmit: () -> Void
@@ -178,18 +181,19 @@ private struct FlowStepCard: View {
                 FlowContinuePicker(selection: continueOn)
             }
 
-            TextField("Command", text: $step.text)
-                .textFieldStyle(.plain)
-                .font(.system(size: 13, design: .monospaced))
-                .foregroundStyle(AppTheme.textPrimary)
-                .padding(.horizontal, 8)
-                .padding(.vertical, 6)
-                .background(
-                    RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
-                        .fill(AppTheme.header)
-                )
-                .focused(focusedStepID, equals: step.id)
-                .onSubmit(onSubmit)
+            CommandHistoryTextField(
+                text: $step.text,
+                placeholder: "Command",
+                history: history,
+                shouldFocus: focusedStepID.wrappedValue == step.id,
+                onSubmit: onSubmit
+            )
+            .padding(.horizontal, 8)
+            .padding(.vertical, 6)
+            .background(
+                RoundedRectangle(cornerRadius: AppTheme.corner, style: .continuous)
+                    .fill(AppTheme.header)
+            )
 
             notifyIcons
 
@@ -240,6 +244,130 @@ private struct FlowStepCard: View {
                 .buttonStyle(.plain)
                 .help("Notify on \(outcome.title)")
             }
+        }
+    }
+}
+
+private struct CommandHistoryTextField: NSViewRepresentable {
+    @Binding var text: String
+    var placeholder: String
+    var history: [String]
+    var shouldFocus: Bool
+    var onSubmit: () -> Void
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text, history: history, onSubmit: onSubmit)
+    }
+
+    func makeNSView(context: Context) -> NSTextField {
+        let field = NSTextField(string: text)
+        field.isBordered = false
+        field.drawsBackground = false
+        field.focusRingType = .none
+        field.font = NSFont.monospacedSystemFont(ofSize: 13, weight: .regular)
+        field.textColor = NSColor(calibratedWhite: 0.92, alpha: 1)
+        field.placeholderString = placeholder
+        field.delegate = context.coordinator
+        field.lineBreakMode = .byTruncatingTail
+        return field
+    }
+
+    func updateNSView(_ nsView: NSTextField, context: Context) {
+        context.coordinator.text = $text
+        context.coordinator.history = history
+        context.coordinator.onSubmit = onSubmit
+        nsView.placeholderString = placeholder
+        if nsView.stringValue != text, nsView.currentEditor() == nil || text.isEmpty {
+            nsView.stringValue = text
+        }
+        if shouldFocus, CommandFieldFocus.isActive {
+            CommandFieldFocus.claim(nsView)
+        }
+    }
+
+    final class Coordinator: NSObject, NSTextFieldDelegate {
+        var text: Binding<String>
+        var history: [String]
+        var onSubmit: () -> Void
+        private var historyIndex: Int?
+        private var historyDraft = ""
+        private var applyingHistory = false
+
+        init(text: Binding<String>, history: [String], onSubmit: @escaping () -> Void) {
+            self.text = text
+            self.history = history
+            self.onSubmit = onSubmit
+        }
+
+        func controlTextDidBeginEditing(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            CommandFieldFocus.claim(field)
+        }
+
+        func controlTextDidChange(_ obj: Notification) {
+            guard let field = obj.object as? NSTextField else { return }
+            text.wrappedValue = field.stringValue
+            if !applyingHistory {
+                historyIndex = nil
+                historyDraft = field.stringValue
+            }
+        }
+
+        func control(_ control: NSControl, textView: NSTextView, doCommandBy commandSelector: Selector) -> Bool {
+            if commandSelector == #selector(NSResponder.insertNewline(_:)) {
+                CommandFieldFocus.isActive = true
+                onSubmit()
+                if let field = control as? NSTextField {
+                    applyingHistory = true
+                    field.stringValue = ""
+                    text.wrappedValue = ""
+                    field.currentEditor()?.selectedRange = NSRange(location: 0, length: 0)
+                    applyingHistory = false
+                }
+                historyIndex = nil
+                historyDraft = ""
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveUp(_:)) {
+                recall(delta: -1, in: control as? NSTextField)
+                return true
+            }
+            if commandSelector == #selector(NSResponder.moveDown(_:)) {
+                recall(delta: 1, in: control as? NSTextField)
+                return true
+            }
+            return false
+        }
+
+        private func recall(delta: Int, in field: NSTextField?) {
+            guard let field, !history.isEmpty else { return }
+            if historyIndex == nil {
+                guard delta < 0 else { return }
+                historyDraft = field.stringValue
+                historyIndex = history.count - 1
+                apply(history[history.count - 1], to: field)
+                return
+            }
+            var index = historyIndex! + delta
+            if index < 0 {
+                index = 0
+            }
+            if index >= history.count {
+                historyIndex = nil
+                apply(historyDraft, to: field)
+                return
+            }
+            historyIndex = index
+            apply(history[index], to: field)
+        }
+
+        private func apply(_ value: String, to field: NSTextField) {
+            applyingHistory = true
+            field.stringValue = value
+            text.wrappedValue = value
+            let end = (value as NSString).length
+            field.currentEditor()?.selectedRange = NSRange(location: end, length: 0)
+            applyingHistory = false
         }
     }
 }
